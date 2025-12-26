@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-media-luna",
   "description": "ai media生成插件",
-  "version": "0.0.71",
+  "version": "0.0.72",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "exports": {

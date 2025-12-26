@@ -22,49 +22,83 @@ npm install koishi-plugin-media-luna
 
 ## 快速开始
 
-### 1. 安装并启用插件
+> **首次使用必读**：请按照以下步骤依次配置，确保每一步都正确完成。
 
-在 Koishi 控制台的插件市场搜索 `media-luna` 并安装。
+### 第一步：配置缓存存储（重要！）
 
-### 2. 配置连接器
+进入 Media Luna 设置页面 → 插件 → cache，配置存储后端：
 
-进入 Media Luna 的设置页面，在「插件」标签页启用并配置所需的连接器：
+**⚠️ 关键配置**：必须确保 `publicBaseUrl`（公开访问地址）配置正确，否则预设图片和生成结果无法正常显示。
 
-- **DALL-E**：需要 OpenAI API Key
-- **SD WebUI**：需要 Stable Diffusion WebUI 的地址
-- **Flux**：需要 Flux API 地址和密钥
-- **Chat API**：支持兼容 OpenAI 格式的图像生成 API
+**推荐使用 MinIO（S3 兼容存储）**：
 
-### 3. 创建渠道
+```bash
+docker run -d --name minio \
+  -p 9000:9000 -p 9001:9001 \
+  -e MINIO_ROOT_USER=admin \
+  -e MINIO_ROOT_PASSWORD=your-password \
+  -v /data/minio:/data \
+  quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z \
+  server /data --console-address ":9001"
+```
+
+然后在 cache 插件中配置：
+- `backend`: `s3`
+- `s3Endpoint`: `http://your-server:9000`
+- `s3AccessKeyId`: `admin`
+- `s3SecretAccessKey`: `your-password`
+- `s3Bucket`: `media-luna`（需先在 MinIO 控制台创建）
+- `s3PublicBaseUrl`: `http://your-server:9000/media-luna`
+- `s3ForcePathStyle`: `true`（MinIO 必须开启）
+
+**其他存储方式**：
+
+- **本地存储**：如果 Koishi 部署在本地，可使用默认配置
+- **服务器部署**：必须配置 `publicBaseUrl` 为外网可访问的地址
+  - 例如：`https://your-domain.com/media-luna/cache`
+- **WebDAV**：配置 `webdavPublicBaseUrl`
+
+**验证方法**：配置完成后，在浏览器访问公开访问地址，确认能正常访问。
+
+### 第二步：启用预设自动同步
+
+进入 设置 → 插件 → preset，开启远程预设同步：
+
+1. 确认 `apiUrl` 配置正确（默认已配置）
+2. 开启 `autoSync`（自动同步）
+3. 点击「同步预设」按钮拉取远程预设
+
+同步成功后，在「预设」页面可以看到大量可用的预设模板。
+
+### 第三步：创建渠道
 
 在「渠道」页面创建新渠道：
 
-1. 填写渠道名称（如 `dalle`）
+1. 填写渠道名称（如 `dalle`、`sd`）—— 这将作为指令触发词
 2. 选择连接器
 3. 配置连接器参数（API Key、模型等）
-4. 添加标签（用于指令匹配）
+4. 添加标签（用于预设匹配）
 
-### 4. 创建预设（可选）
+### 第四步：开始使用
 
-在「预设」页面创建提示词模板：
-
-```
-realistic photo, {{userText}}, high quality, 8k, detailed
-```
-
-`{{userText}}` 会被用户输入的提示词替换。
-
-### 5. 使用
-
-在聊天中使用命令生成图片：
+在聊天中使用渠道名作为指令：
 
 ```
-画图 一只可爱的猫咪
+bnn 一只可爱的猫咪
 ```
 
 或通过 WebUI 的「生成」页面直接生成。
 
 ## 配置说明
+
+### 全局配置 vs 渠道配置
+
+Media Luna 支持两级配置：
+
+- **全局配置**：在「设置」页面配置，对所有渠道生效
+- **渠道配置**：在渠道编辑页面的「插件覆盖」中配置，仅对该渠道生效，会覆盖全局配置
+
+例如：计费插件的 `cost`（费用）可以在全局设置默认值，然后在特定渠道覆盖为不同的价格。
 
 ### 插件配置
 
@@ -74,18 +108,137 @@ realistic photo, {{userText}}, high quality, 8k, detailed
 |--------|------|--------|
 | logLevel | 日志级别 | info |
 
+### 计费插件 (billing)
+
+配置路径：设置 → 插件 → billing
+
+| 配置项 | 说明 | 默认值 | 可渠道覆盖 |
+|--------|------|--------|------------|
+| tableName | 数据库表名 | `monetary` | 否 |
+| userIdField | 用户 ID 字段名 | `uid` | 否 |
+| balanceField | 余额字段名 | `value` | 否 |
+| currencyField | 货币类型字段名 | `currency` | 否 |
+| currencyLabel | 货币显示名称 | `积分` | 否 |
+| refundOnFail | 失败自动退款 | `true` | 否 |
+| cost | 单次费用 | `0` | **是** |
+| currencyValue | 货币类型值 | `default` | **是** |
+
+**货币系统说明**：
+- 默认使用 `monetary` 表（koishi-plugin-monetary 插件的表）
+- 可通过 `tableName`、`userIdField`、`balanceField` 自定义对接其他货币系统
+- `currencyField` 留空表示不区分货币类型
+
+**提示模板变量**：`{cost}` 费用、`{balance}` 余额、`{label}` 货币名称、`{error}` 错误信息
+
+### 缓存插件 (cache)
+
+配置路径：设置 → 插件 → cache
+
+> **⚠️ 重要提示**：这是首次配置必须正确设置的插件！
+>
+> `publicBaseUrl`（或 S3/WebDAV 的公开访问地址）必须配置为**用户可访问**的地址，否则：
+> - 预设的缩略图无法显示
+> - 生成的图片无法发送给用户
+> - 参考图片无法正常加载
+
+支持多种存储后端：
+
+| 后端 | 说明 |
+|------|------|
+| `local` | 本地文件存储（默认） |
+| `s3` | S3 兼容存储（AWS S3、MinIO、阿里云 OSS 等） |
+| `webdav` | WebDAV 存储 |
+| `none` | 禁用缓存 |
+
+**本地存储配置**：
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| cacheDir | 缓存目录 | `data/media-luna/cache` |
+| publicPath | HTTP 路由路径 | `/media-luna/cache` |
+| **publicBaseUrl** | **外部访问地址（必须配置！）** | 自动检测 |
+| maxCacheSize | 最大缓存大小 (MB) | `500` |
+| maxFileSize | 单文件限制 (MB) | `50` |
+| expireDays | 过期天数 (0=永不) | `30` |
+
+**publicBaseUrl 配置示例**：
+- 本地开发：`http://localhost:5140/media-luna/cache`
+- 服务器部署：`https://your-domain.com/media-luna/cache`
+- 使用反向代理：确保代理路径正确转发
+
+**S3 存储配置**：
+
+| 配置项 | 说明 |
+|--------|------|
+| s3Endpoint | S3 端点地址 |
+| s3Region | 区域 |
+| s3AccessKeyId | Access Key ID |
+| s3SecretAccessKey | Secret Access Key |
+| s3Bucket | Bucket 名称 |
+| **s3PublicBaseUrl** | **CDN/公开访问 URL（必须配置！）** |
+| s3ForcePathStyle | 强制路径风格（MinIO 需开启） |
+
+**WebDAV 存储配置**：
+
+| 配置项 | 说明 |
+|--------|------|
+| webdavEndpoint | WebDAV 端点 |
+| webdavUsername | 用户名 |
+| webdavPassword | 密码 |
+| webdavBasePath | 基础路径 |
+| webdavPublicBaseUrl | 公开访问 URL |
+
+### 预设插件 (preset)
+
+配置路径：设置 → 插件 → preset
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| enabled | 启用预设处理 | `true` |
+| defaultPreset | 默认预设名 | 空 |
+| apiUrl | 远程预设 API | `https://prompt.vioaki.xyz/api/templates?per_page=-1` |
+| autoSync | 自动同步 | `false` |
+| syncInterval | 同步间隔（分钟） | `60` |
+| deleteRemoved | 删除远程已移除的预设 | `false` |
+
+### 任务记录插件 (task)
+
+配置路径：设置 → 插件 → task
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| enabled | 启用任务记录 | `true` |
+| autoCleanup | 自动清理过期记录 | `false` |
+| retentionDays | 保留天数 | `30` |
+
+### 指令插件 (koishi-commands)
+
+配置路径：设置 → 插件 → koishi-commands
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| enabled | 启用聊天指令 | `true` |
+| collectTimeout | 收集模式超时（秒） | `120` |
+| directTriggerImageCount | 直接触发所需最小图片数 | `2` |
+
 ### 连接器配置
 
-各连接器的详细配置请参考对应的设置页面。
+各连接器在「设置 → 插件」中配置，主要参数：
 
-### 中间件配置
-
-在「设置」→「中间件」页面配置各中间件的行为：
-
-- **计费 (billing)**：启用/禁用计费，配置货币提供者
-- **预设 (preset)**：自动应用预设模板
-- **缓存 (cache)**：资源缓存设置
-- **任务记录 (task)**：任务保留时间
+| 连接器 | 必填参数 | 说明 |
+|--------|----------|------|
+| DALL-E | apiUrl, apiKey, model | OpenAI DALL-E |
+| SD WebUI | apiUrl | 本地 SD WebUI |
+| Flux | apiUrl, apiKey | Replicate Flux |
+| Chat API | apiUrl, apiKey, model | OpenAI 兼容 API |
+| Gemini | apiUrl, apiKey, model | Google Gemini |
+| ChatLuna | model | 需安装 chatluna 插件 |
+| Midjourney | apiUrl, apiKey | MJ Proxy 服务 |
+| Stability | apiKey, model | Stability AI |
+| ComfyUI | apiUrl | ComfyUI 服务 |
+| 豆包 | apiUrl, apiKey, model | 火山引擎 Seedream |
+| Suno | apiUrl, apiKey | Suno AI 音乐 |
+| Runway | apiUrl, apiKey, model | Runway 视频 |
 
 ## WebUI 页面
 
