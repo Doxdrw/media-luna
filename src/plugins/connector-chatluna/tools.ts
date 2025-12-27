@@ -228,7 +228,11 @@ class MediaLunaGenerateTool extends StructuredTool {
         // 后台执行生成
         this.generateAsync(mediaLuna, channelName, presetName, input.prompt, files, session)
 
-        return 'Image generation started. The result will be sent directly to the chat when complete.'
+        // 返回明确的状态信息，防止 AI 重复调用
+        return `[TASK SUBMITTED] Image generation task has been successfully submitted and is now processing in the background. ` +
+          `Channel: ${channelName}, Preset: ${presetName || 'none'}. ` +
+          `The generated image will be sent directly to the user when complete. ` +
+          `DO NOT call this tool again for the same request - the task is already running.`
       }
 
       // 同步模式：等待生成完成
@@ -242,6 +246,7 @@ class MediaLunaGenerateTool extends StructuredTool {
 
   /**
    * 同步生成：等待完成后返回
+   * 直接返回图片 URL，不通过 session.send 发送，由 AI 决定如何展示
    */
   private async generateSync(
     mediaLuna: any,
@@ -268,20 +273,27 @@ class MediaLunaGenerateTool extends StructuredTool {
       return 'Generation completed but no output was produced'
     }
 
-    // 处理输出
+    // 处理输出 - 直接返回 URL，不通过 session 发送
     const outputs: string[] = []
     for (const asset of result.output) {
       if (asset.kind === 'image' && asset.url) {
-        if (session) {
-          await session.send(`<image url="${asset.url}"/>`)
-        }
-        outputs.push(`Generated image: ${asset.url}`)
+        outputs.push(asset.url)
+      } else if (asset.kind === 'video' && asset.url) {
+        outputs.push(`[video] ${asset.url}`)
       } else if (asset.kind === 'text' && asset.content) {
         outputs.push(asset.content)
       }
     }
 
-    return outputs.join('\n') || 'Image generated successfully'
+    if (outputs.length === 0) {
+      return 'Image generated successfully but no displayable output'
+    }
+
+    // 返回格式：明确告知生成完成和结果
+    if (outputs.length === 1) {
+      return `Image generated successfully. URL: ${outputs[0]}`
+    }
+    return `Generated ${outputs.length} outputs:\n${outputs.map((url, i) => `${i + 1}. ${url}`).join('\n')}`
   }
 
   /**

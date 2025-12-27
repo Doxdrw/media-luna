@@ -306,7 +306,9 @@ export class RemoteSyncService {
           }
 
           if (existing) {
-            await this._presetService.update(existing.id, presetData)
+            // 更新时保留用户设置的 enabled 状态
+            const { enabled: _ignored, ...updateData } = presetData
+            await this._presetService.update(existing.id, updateData)
             result.updated++
             this._logger.debug('Updated preset: %s', template.title)
           } else {

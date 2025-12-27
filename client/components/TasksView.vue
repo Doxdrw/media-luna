@@ -60,7 +60,7 @@
         </button>
       </div>
     </div>
-    <div class="stats-grid" v-if="stats">
+    <div class="stats-grid" v-if="stats && viewMode === 'list'">
       <div class="stat-card">
         <div class="stat-icon total"><k-icon name="clipboard-list"></k-icon></div>
         <div class="stat-content">
@@ -296,12 +296,7 @@
                   <k-icon name="zoom-in" class="zoom-icon"></k-icon>
                 </div>
               </div>
-              <div class="gallery-info">
-                <div class="gallery-prompt" :title="item.prompt">{{ item.prompt }}</div>
-                <div class="gallery-meta">
-                  <span class="gallery-time">{{ formatDate(item.createdAt) }}</span>
-                </div>
-              </div>
+              <!-- 画廊模式下隐藏数据展示，纯图片浏览 -->
             </div>
           </div>
         </div>
@@ -1249,27 +1244,6 @@ onMounted(() => {
 .gallery-item:hover .zoom-icon {
   opacity: 1;
   transform: scale(1);
-}
-
-.gallery-info {
-  padding: 0.75rem;
-}
-
-.gallery-prompt {
-  font-size: 0.85rem;
-  color: var(--k-color-text);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  line-height: 1.4;
-}
-
-.gallery-meta {
-  margin-top: 0.5rem;
-  font-size: 0.75rem;
-  color: var(--k-color-text-description);
 }
 
 .empty-gallery {
