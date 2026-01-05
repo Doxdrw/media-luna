@@ -24,6 +24,7 @@ import sunoConnectorPlugin from './connector-suno'
 import runwayConnectorPlugin from './connector-runway'
 import comfyuiConnectorPlugin from './connector-comfyui'
 import chatlunaConnectorPlugin from './connector-chatluna'
+import testConnectorPlugin from './connector-test'
 import doubaoConnectorPlugin from './connector-doubao'
 import minimaxConnectorPlugin from './connector-minimax'
 import edgeTTSConnectorPlugin from './connector-edge-tts'
@@ -55,6 +56,7 @@ export const builtinPlugins: PluginDefinition[] = [
   runwayConnectorPlugin,
   comfyuiConnectorPlugin,
   chatlunaConnectorPlugin,
+  testConnectorPlugin,
   doubaoConnectorPlugin,
   minimaxConnectorPlugin,
   edgeTTSConnectorPlugin,
@@ -85,6 +87,7 @@ export {
   runwayConnectorPlugin,
   comfyuiConnectorPlugin,
   chatlunaConnectorPlugin,
+  testConnectorPlugin,
   doubaoConnectorPlugin,
   minimaxConnectorPlugin,
   edgeTTSConnectorPlugin,

@@ -5,7 +5,11 @@ import { promptEnhanceConfigFields, defaultPromptEnhanceConfig, type ChatLunaPro
 
 // ============ 类型定义 ============
 
-/** 返回模式 */
+/**
+ * 返回模式
+ * - sync: 等待生成完全完成后返回
+ * - async: prepare 阶段完成后返回（已创建任务、预扣费完成），后台继续生成
+ */
 export type ReturnMode = 'sync' | 'async'
 
 /** 工具配置 */
@@ -16,12 +20,8 @@ export interface ToolConfig {
   description: string
   /** 是否启用 */
   enabled: boolean
-  /** 返回模式：sync=等待生成完成后返回，async=立即返回并在后台生成 */
+  /** 返回模式：sync=等待生成完成，async=prepare完成后返回（后台生成） */
   returnMode: ReturnMode
-  /** 异步模式下是否发送开始提示 */
-  asyncSendStartMessage?: boolean
-  /** 异步模式开始提示内容 */
-  asyncStartMessage?: string
   /** 内置渠道名（如果设置，AI 无法选择渠道） */
   builtinChannel?: string
   /** 内置预设名（如果设置，AI 无法选择预设） */
@@ -151,22 +151,9 @@ export const chatlunaConfigFields: ConfigField[] = [
         type: 'select',
         options: [
           { label: '同步（等待完成）', value: 'sync' },
-          { label: '异步（立即返回）', value: 'async' }
+          { label: '异步（后台生成）', value: 'async' }
         ],
         width: '140px'
-      },
-      {
-        key: 'asyncSendStartMessage',
-        label: '发送开始提示',
-        type: 'boolean',
-        width: '100px'
-      },
-      {
-        key: 'asyncStartMessage',
-        label: '开始提示内容',
-        type: 'text',
-        placeholder: '图片正在生成中...',
-        width: '160px'
       },
       {
         key: 'builtinChannel',
@@ -209,9 +196,7 @@ export const defaultToolConfig: ToolConfig = {
   name: 'draw',
   description: 'Generate images based on text prompts. Supports various styles and presets.',
   enabled: true,
-  returnMode: 'async',
-  asyncSendStartMessage: true,
-  asyncStartMessage: '图片生成中，请稍候...'
+  returnMode: 'async'
 }
 
 export const defaultConfig: ChatLunaPluginConfig = {

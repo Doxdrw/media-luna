@@ -133,12 +133,9 @@ async function generate(
     }))
   }
 
-  // 如果没有图片，返回文本内容
-  logger.warn(`[ChatLuna] 未找到图片，返回文本`)
-  return [{
-    kind: 'text' as const,
-    content: elementStr
-  }]
+  // 如果没有图片，抛出错误
+  logger.warn(`[ChatLuna] 未找到图片，返回内容: ${elementStr.slice(0, 200)}...`)
+  throw new Error(`模型未返回图片，返回内容: ${elementStr.slice(0, 100)}${elementStr.length > 100 ? '...' : ''}`)
 }
 
 /** ChatLuna 连接器定义 */

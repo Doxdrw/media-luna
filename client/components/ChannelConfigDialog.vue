@@ -810,6 +810,26 @@ const handleSave = async () => {
     return
   }
 
+  // 确保连接器字段已加载
+  if (!connectorFields.value[form.value.connectorId]) {
+    try {
+      const fields = await connectorApi.fields(form.value.connectorId)
+      connectorFields.value[form.value.connectorId] = fields
+    } catch (e) {
+      console.error('Failed to load connector fields:', e)
+    }
+  }
+
+  // 填充连接器配置的默认值（确保所有字段都明确保存）
+  const fields = currentConnectorFields.value
+  const filledConfig = { ...form.value.connectorConfig }
+  for (const field of fields) {
+    if (filledConfig[field.key] === undefined && field.default !== undefined) {
+      filledConfig[field.key] = field.default
+    }
+  }
+  form.value.connectorConfig = filledConfig
+
   saving.value = true
   try {
     if (isEdit.value && props.channel?.id) {

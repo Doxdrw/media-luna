@@ -27,6 +27,7 @@ export interface TaskQueryOptions {
   channelId?: number
   status?: TaskStatus
   startDate?: Date  // 只查询此时间之后的任务
+  mediaType?: string  // 媒体类型筛选: image/audio/video
   limit?: number
   offset?: number
 }
@@ -148,6 +149,31 @@ export class TaskService {
       selection = selection.where(row => $.gte(row.startTime, options.startDate!))
     }
 
+    // 如果有 mediaType 筛选，需要在内存中过滤（因为 responseSnapshot 是 JSON 字段）
+    if (options.mediaType) {
+      // 获取更多记录以便过滤后仍有足够结果
+      const targetLimit = options.limit ?? 100
+      const fetchLimit = targetLimit * 3  // 获取 3 倍数量以补偿过滤损耗
+
+      const records = await selection
+        .orderBy('id', 'desc')
+        .limit(fetchLimit)
+        .offset(options.offset ?? 0)
+        .execute()
+
+      // 在内存中过滤
+      const filtered: TaskData[] = []
+      for (const r of records) {
+        const data = this._toData(r)
+        // 检查 responseSnapshot 是否包含指定类型的媒体
+        if (data.responseSnapshot?.some(asset => asset.kind === options.mediaType)) {
+          filtered.push(data)
+          if (filtered.length >= targetLimit) break
+        }
+      }
+      return filtered
+    }
+
     const records = await selection
       .orderBy('id', 'desc')
       .limit(options.limit ?? 100)
@@ -177,6 +203,19 @@ export class TaskService {
     }
     if (options.startDate) {
       selection = selection.where(row => $.gte(row.startTime, options.startDate!))
+    }
+
+    // 如果有 mediaType 筛选，需要在内存中过滤
+    if (options.mediaType) {
+      const records = await selection.execute()
+      let count = 0
+      for (const r of records) {
+        const data = this._toData(r)
+        if (data.responseSnapshot?.some(asset => asset.kind === options.mediaType)) {
+          count++
+        }
+      }
+      return count
     }
 
     const result = await selection.execute()

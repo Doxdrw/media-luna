@@ -324,4 +324,181 @@ export function registerPresetApi(ctx: Context): void {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     }
   })
+
+  // ========== 上传 API ==========
+
+  // 获取上传配置
+  console.addListener('media-luna/presets/upload-config', async () => {
+    try {
+      const presetConfig = ctx.mediaLuna.configService.get<{
+        uploadUrl?: string
+        defaultAuthor?: string
+      }>('plugin:preset', {})
+
+      return {
+        success: true,
+        data: {
+          uploadUrl: presetConfig.uploadUrl || '',
+          defaultAuthor: presetConfig.defaultAuthor || '',
+          enabled: !!presetConfig.uploadUrl
+        }
+      }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    }
+  })
+
+  // 上传预设到远程
+  console.addListener('media-luna/presets/upload', async (data: {
+    title: string
+    prompt: string
+    imageUrl?: string
+    category?: 'gallery' | 'template'
+    type?: 'txt2img' | 'img2img'
+    author?: string
+    description?: string
+    tags?: string[]
+    referenceImages?: Array<{ url?: string; isPlaceholder?: boolean }>
+  }) => {
+    try {
+      const { remotePresets, error } = getRemoteSyncService()
+      if (error) return error
+
+      // 从配置获取上传 URL 和默认作者
+      const presetConfig = ctx.mediaLuna.configService.get<{
+        uploadUrl?: string
+        defaultAuthor?: string
+      }>('plugin:preset', {})
+
+      const uploadUrl = presetConfig.uploadUrl
+      if (!uploadUrl) {
+        return { success: false, error: '未配置上传地址' }
+      }
+
+      // 使用默认作者（如果未指定）
+      const author = data.author || presetConfig.defaultAuthor || ''
+
+      const result = await remotePresets.upload(uploadUrl, {
+        title: data.title,
+        prompt: data.prompt,
+        imageUrl: data.imageUrl,
+        category: data.category || 'gallery',
+        type: data.type || 'txt2img',
+        author,
+        description: data.description,
+        tags: data.tags,
+        referenceImages: data.referenceImages?.map(ref => ({
+          url: ref.url,
+          isPlaceholder: ref.isPlaceholder
+        }))
+      })
+
+      if (!result.success) {
+        return { success: false, error: result.error }
+      }
+
+      return {
+        success: true,
+        data: {
+          pending: result.pending,
+          message: result.pending ? '上传成功，等待审核' : '上传成功'
+        }
+      }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    }
+  })
+
+  // 上传任务生成结果到远程
+  console.addListener('media-luna/presets/upload-task', async (data: {
+    taskId: number
+    assetIndex?: number
+    title: string
+    category?: 'gallery' | 'template'
+    author?: string
+    description?: string
+    tags?: string[]
+  }) => {
+    try {
+      const { remotePresets, error } = getRemoteSyncService()
+      if (error) return error
+
+      // 获取任务数据
+      const taskService = ctx.mediaLuna.tasks
+      if (!taskService) {
+        return { success: false, error: 'Task service not available' }
+      }
+
+      const task = await taskService.getById(data.taskId)
+      if (!task) {
+        return { success: false, error: '任务不存在' }
+      }
+
+      if (task.status !== 'success' || !task.responseSnapshot?.length) {
+        return { success: false, error: '任务没有可上传的结果' }
+      }
+
+      // 获取配置
+      const presetConfig = ctx.mediaLuna.configService.get<{
+        uploadUrl?: string
+        defaultAuthor?: string
+      }>('plugin:preset', {})
+
+      const uploadUrl = presetConfig.uploadUrl
+      if (!uploadUrl) {
+        return { success: false, error: '未配置上传地址' }
+      }
+
+      // 确定要上传的资产
+      const assetIndex = data.assetIndex ?? 0
+      const asset = task.responseSnapshot[assetIndex]
+      if (!asset || !asset.url) {
+        return { success: false, error: '无效的资产索引' }
+      }
+
+      // 获取提示词
+      const prompt = (task.middlewareLogs as any)?.preset?.transformedPrompt
+        || task.requestSnapshot?.prompt
+        || ''
+
+      // 确定类型
+      const hasRefImages = task.requestSnapshot?.files && task.requestSnapshot.files.length > 0
+      const type = hasRefImages ? 'img2img' : 'txt2img'
+
+      // 构建参考图片
+      const referenceImages = hasRefImages
+        ? task.requestSnapshot!.files!.map((file: any) => ({
+            url: typeof file === 'string' ? file : (file.url || file.data)
+          }))
+        : undefined
+
+      const author = data.author || presetConfig.defaultAuthor || ''
+
+      const result = await remotePresets.upload(uploadUrl, {
+        title: data.title,
+        prompt,
+        imageUrl: asset.url,
+        category: data.category || 'gallery',
+        type,
+        author,
+        description: data.description,
+        tags: data.tags,
+        referenceImages
+      })
+
+      if (!result.success) {
+        return { success: false, error: result.error }
+      }
+
+      return {
+        success: true,
+        data: {
+          pending: result.pending,
+          message: result.pending ? '上传成功，等待审核' : '上传成功'
+        }
+      }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    }
+  })
 }

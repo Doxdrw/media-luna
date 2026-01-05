@@ -73,5 +73,5 @@ export default definePlugin({
 
 // 导出类型和服务
 export { PresetService, PresetData } from './service'
-export { RemoteSyncService, SyncResult } from './remote-sync.service'
+export { RemoteSyncService, SyncResult, UploadData, UploadResult } from './remote-sync.service'
 export type { PresetPluginConfig, PresetMiddlewareConfig, RemoteSyncConfig } from './config'

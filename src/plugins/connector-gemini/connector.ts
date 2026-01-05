@@ -11,24 +11,37 @@ async function generate(
   files: FileData[],
   prompt: string
 ): Promise<OutputAsset[]> {
+  const logger = ctx.logger('media-luna')
+
+  // 调试：打印原始配置中的 filterThoughtImages
+  logger.debug('[gemini] config.filterThoughtImages raw value: %o (type: %s)',
+    config.filterThoughtImages,
+    typeof config.filterThoughtImages
+  )
+
+  // 从 config 中获取配置（默认值由前端字段定义提供，保存时已填充）
   const {
-    apiUrl = 'https://generativelanguage.googleapis.com',
+    apiUrl,
     apiKey,
     model,
     numberOfImages,
     aspectRatio,
     imageSize,
     enableGoogleSearch,
-    filterThoughtImages = true,
-    timeout = 600
+    thinkingLevel,
+    filterThoughtImages,
+    timeout
   } = config
+
+  // 调试：打印解构后的值
+  logger.debug('[gemini] filterThoughtImages after destructure: %o', filterThoughtImages)
 
   if (!model) {
     throw new Error('模型未配置')
   }
 
-  // 构建完整 API Endpoint
-  const baseUrl = apiUrl.replace(/\/$/, '')
+  // 构建完整 API Endpoint（兼容旧数据，提供后备默认值）
+  const baseUrl = (apiUrl || 'https://generativelanguage.googleapis.com').replace(/\/$/, '')
   // 如果用户填写了带 /v1beta 的路径，则直接使用
   // 否则根据模型名称自动拼接路径
   const version = 'v1beta'
@@ -93,6 +106,13 @@ async function generate(
     requestBody.generationConfig.candidateCount = Number(numberOfImages)
   }
 
+  // 添加思考配置
+  if (thinkingLevel) {
+    requestBody.generationConfig.thinkingConfig = {
+      thinkingLevel: thinkingLevel
+    }
+  }
+
   // 启用谷歌搜索
   if (enableGoogleSearch) {
     requestBody.tools = [{ google_search: {} }]
@@ -103,18 +123,28 @@ async function generate(
       headers: {
         'Content-Type': 'application/json'
       },
-      timeout: timeout * 1000
+      timeout: (timeout || 600) * 1000
     })
 
     const assets: OutputAsset[] = []
     const candidates = response.candidates || []
 
+    // 调试：统计 parts 信息
+    let totalParts = 0
+    let thoughtParts = 0
+    let imageParts = 0
+
     for (const candidate of candidates) {
       const parts = candidate.content?.parts || []
 
       for (const part of parts) {
+        totalParts++
+        if (part.thought) thoughtParts++
+        if (part.inlineData) imageParts++
+
         // 过滤思考过程的图片（thought: true 标记的 parts）
-        if (filterThoughtImages && part.thought) {
+        // 兼容旧数据：filterThoughtImages 未设置时默认为 true
+        if ((filterThoughtImages ?? true) && part.thought) {
           continue
         }
 
@@ -129,12 +159,17 @@ async function generate(
             mime: mimeType,
             meta: {
               model,
-              aspectRatio
+              aspectRatio,
+              isThought: part.thought || false
             }
           })
         }
       }
     }
+
+    logger.debug('[gemini] Response stats: totalParts=%d, thoughtParts=%d, imageParts=%d, assets=%d',
+      totalParts, thoughtParts, imageParts, assets.length
+    )
 
     if (assets.length === 0) {
       // 检查是否有文本错误信息

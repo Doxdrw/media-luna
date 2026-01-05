@@ -26,6 +26,7 @@ export function registerTaskApi(ctx: Context): void {
     channelId?: number
     status?: TaskStatus
     startDate?: string  // ISO date string
+    mediaType?: string  // image/audio/video
     limit?: number
     offset?: number
   } = {}) => {
@@ -38,6 +39,7 @@ export function registerTaskApi(ctx: Context): void {
         channelId: options.channelId,
         status: options.status,
         startDate: options.startDate ? new Date(options.startDate) : undefined,
+        mediaType: options.mediaType,
         limit: Math.min(options.limit || 50, 100),
         offset: options.offset || 0
       }
@@ -48,7 +50,8 @@ export function registerTaskApi(ctx: Context): void {
           uid: queryOptions.uid,
           channelId: queryOptions.channelId,
           status: queryOptions.status,
-          startDate: queryOptions.startDate
+          startDate: queryOptions.startDate,
+          mediaType: queryOptions.mediaType
         })
       ])
 

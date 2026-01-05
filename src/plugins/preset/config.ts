@@ -14,6 +14,10 @@ export interface PresetMiddlewareConfig {
 export interface RemoteSyncConfig {
   /** 远程 API URL */
   apiUrl: string
+  /** 上传 URL */
+  uploadUrl: string
+  /** 默认作者名 */
+  defaultAuthor: string
   /** 是否启用自动同步 */
   autoSync: boolean
   /** 自动同步间隔（分钟） */
@@ -60,6 +64,22 @@ export const remoteSyncConfigFields: ConfigField[] = [
     description: '项目地址：https://github.com/vioaki/Prompt-Manager'
   },
   {
+    key: 'uploadUrl',
+    label: '上传地址',
+    type: 'text',
+    default: 'https://prompt.vioaki.xyz/upload',
+    placeholder: 'https://prompt.vioaki.xyz/upload',
+    description: '上传作品/模板的地址，留空则禁用上传功能'
+  },
+  {
+    key: 'defaultAuthor',
+    label: '默认作者名',
+    type: 'text',
+    default: '',
+    placeholder: '匿名',
+    description: '上传时使用的默认作者名，留空则显示为匿名'
+  },
+  {
     key: 'autoSync',
     label: '自动同步',
     type: 'boolean',
@@ -101,6 +121,8 @@ export const defaultPresetConfig: PresetPluginConfig = {
   enabled: true,
   defaultPreset: '',
   apiUrl: 'https://prompt.vioaki.xyz/api/templates?per_page=-1',
+  uploadUrl: 'https://prompt.vioaki.xyz/upload',
+  defaultAuthor: '',
   autoSync: false,
   syncInterval: 60,
   deleteRemoved: false,

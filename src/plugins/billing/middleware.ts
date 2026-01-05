@@ -78,23 +78,6 @@ async function resolveUserId(
   }
 }
 
-/**
- * 获取有效配置值（渠道覆盖 > 全局配置）
- */
-function getEffectiveValue<T>(
-  config: BillingConfig | null,
-  mctx: MiddlewareContext,
-  key: keyof BillingConfig
-): T | undefined {
-  // 先检查渠道覆盖配置
-  const override = mctx.channel?.pluginOverrides?.billing?.[key]
-  if (override !== undefined && override !== null && override !== '') {
-    return override as T
-  }
-  // 回退到全局配置
-  return config?.[key] as T | undefined
-}
-
 /** 构建查询条件 */
 function buildQueryCondition(
   config: BillingConfig,
@@ -119,14 +102,19 @@ async function getBalance(
   userId: number | string,
   currencyValue: string
 ): Promise<number> {
+  const logger = ctx.logger('media-luna')
   try {
     const condition = buildQueryCondition(config, userId, currencyValue)
+    logger.info('[billing] getBalance query: table=%s, condition=%o', config.tableName, condition)
+
     const rows = await ctx.database.get(config.tableName as any, condition)
+    logger.info('[billing] getBalance result: rows=%o', rows)
 
     if (rows.length === 0) return 0
     return Number((rows[0] as any)[config.balanceField]) || 0
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e)
+    logger.error('[billing] getBalance error: %s', errMsg)
     if (errMsg.includes('cannot resolve table')) {
       throw new Error(`表 "${config.tableName}" 未被声明。请确保已安装并启用声明该表的插件（如 koishi-plugin-monetary）`)
     }
@@ -170,9 +158,21 @@ export function createBillingPrepareMiddleware(): MiddlewareDefinition {
 
     async execute(mctx: MiddlewareContext, next): Promise<MiddlewareRunStatus> {
       const config = await mctx.getMiddlewareConfig<BillingConfig>('billing')
+      const logger = mctx.ctx.logger('media-luna')
 
-      // 获取有效的费用（渠道覆盖 > 全局配置）
-      const cost = getEffectiveValue<number>(config, mctx, 'cost') ?? 0
+      // 调试日志：打印读取到的配置
+      logger.info('[billing-prepare] config: %o', {
+        tableName: config?.tableName,
+        userIdField: config?.userIdField,
+        balanceField: config?.balanceField,
+        currencyField: config?.currencyField,
+        currencyValue: config?.currencyValue,
+        currencyLabel: config?.currencyLabel,
+        cost: config?.cost
+      })
+
+      // 获取费用（已由 getMiddlewareConfig 合并渠道覆盖）
+      const cost = config?.cost ?? 0
 
       // cost = 0 表示免费渠道，跳过计费检查
       if (cost <= 0) {
@@ -203,8 +203,8 @@ export function createBillingPrepareMiddleware(): MiddlewareDefinition {
         throw new Error('无法识别用户身份，请先绑定账号')
       }
 
-      // 获取有效的货币类型（渠道覆盖 > 全局配置）
-      const currencyValue = getEffectiveValue<string>(config, mctx, 'currencyValue') ?? 'default'
+      // 获取货币类型（已由 getMiddlewareConfig 合并渠道覆盖）
+      const currencyValue = config.currencyValue ?? 'default'
       const currencyLabel = config.currencyLabel || '积分'
 
       try {

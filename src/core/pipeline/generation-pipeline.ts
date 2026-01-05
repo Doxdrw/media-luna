@@ -255,7 +255,9 @@ export class GenerationPipeline {
       getMiddlewareConfig: async <T>(name: string): Promise<T | null> => {
         // 获取中间件定义以获取 configGroup
         const middleware = this._getMiddleware(name)
-        const configGroup = (middleware as any)?.configGroup || (middleware as any)?.category || name
+        // 优先使用 configGroup，其次使用中间件名称（与插件 ID 对应）
+        // 注意：不使用 category，因为 category 是分类而非配置组
+        const configGroup = (middleware as any)?.configGroup || name
 
         // 获取全局配置（_getMiddlewareConfig 内部已经会处理 configGroup）
         const globalConfig = await this._getMiddlewareConfig(name)

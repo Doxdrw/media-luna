@@ -60,6 +60,19 @@ export const connectorFields: ConnectorField[] = [
     description: '启用后模型可使用 Google 搜索获取实时信息'
   },
   {
+    key: 'thinkingLevel',
+    label: '思考程度',
+    type: 'select',
+    options: [
+      { label: '不设置', value: '' },
+      { label: '高 (high)', value: 'high' },
+      { label: '中 (medium) - 仅 Flash', value: 'medium' },
+      { label: '低 (low)', value: 'low' },
+      { label: '最小 (minimal) - 仅 Flash', value: 'minimal' }
+    ],
+    description: '控制模型思考的深度，medium 和 minimal 仅支持 Flash 模型'
+  },
+  {
     key: 'filterThoughtImages',
     label: '过滤思考图片',
     type: 'boolean',

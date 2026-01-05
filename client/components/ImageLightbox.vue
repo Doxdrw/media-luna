@@ -137,12 +137,28 @@
                   <k-icon name="download"></k-icon>
                   下载
                 </button>
+                <button v-if="canUpload" class="action-btn upload" @click="handleUpload" title="上传到云端">
+                  <k-icon name="upload"></k-icon>
+                </button>
               </div>
             </div>
           </div>
         </div>
       </div>
     </transition>
+
+    <!-- 上传对话框 -->
+    <UploadDialog
+      v-if="taskData"
+      v-model="uploadDialogVisible"
+      mode="task"
+      :task-data="{
+        taskId: taskData.id,
+        assetIndex: currentIndex,
+        imageUrl: currentMedia?.url || '',
+        prompt: displayPrompt
+      }"
+    />
   </teleport>
 </template>
 
@@ -152,6 +168,7 @@ import { message } from '@koishijs/client'
 import { taskApi, userApi } from '../api'
 import type { TaskData, AssetKind } from '../types'
 import AudioPlayer from './AudioPlayer.vue'
+import UploadDialog from './UploadDialog.vue'
 
 /** 媒体项 */
 interface MediaItem {
@@ -401,6 +418,15 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   document.body.style.overflow = ''
 })
+
+// 上传功能（仅在 taskId 模式且当前是图片时可用）
+const uploadDialogVisible = ref(false)
+const canUpload = computed(() => isTaskIdMode.value && currentMedia.value?.kind === 'image' && taskData.value)
+
+const handleUpload = () => {
+  if (!canUpload.value) return
+  uploadDialogVisible.value = true
+}
 </script>
 
 <style scoped>
@@ -765,6 +791,20 @@ onUnmounted(() => {
   background: var(--k-color-bg-1);
   border-color: var(--k-color-active);
   color: var(--k-color-active);
+}
+
+.action-btn.upload {
+  background: var(--k-color-bg-2);
+  color: var(--k-color-text);
+  border: 1px solid var(--k-color-border);
+  flex: 0 0 auto;
+  padding: 10px 14px;
+}
+
+.action-btn.upload:hover {
+  background: var(--k-color-primary, #409eff);
+  border-color: var(--k-color-primary, #409eff);
+  color: white;
 }
 
 /* 过渡动画 */

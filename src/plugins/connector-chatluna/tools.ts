@@ -242,25 +242,16 @@ class MediaLunaGenerateTool extends StructuredTool {
         }
       }
 
-      // 异步模式：立即返回，后台生成
+      // 根据返回模式决定执行方式
+      // async: 等待 prepare 阶段完成后返回，后台继续生成
+      // sync: 等待生成完全完成后返回
       if (this.toolConfig.returnMode === 'async') {
-        // 根据配置决定是否发送开始消息
-        if (session && this.toolConfig.asyncSendStartMessage !== false) {
-          const startMessage = this.toolConfig.asyncStartMessage || '图片正在生成中...'
-          await session.send(startMessage)
-        }
-
-        // 后台执行生成
-        this.generateAsync(mediaLuna, channelName, presetName, input.prompt, files, session)
-
-        // 返回明确的状态信息，防止 AI 重复调用
-        return `[TASK SUBMITTED] Image generation task has been successfully submitted and is now processing in the background. ` +
-          `Channel: ${channelName}, Preset: ${presetName || 'none'}. ` +
-          `The generated image will be sent directly to the user when complete. ` +
-          `DO NOT call this tool again for the same request - the task is already running.`
+        return await this.generateAsync(
+          mediaLuna, channelName, presetName, input.prompt, files, session
+        )
       }
 
-      // 同步模式：等待生成完成
+      // sync: 等待生成完成
       return await this.generateSync(mediaLuna, channelName, presetName, input.prompt, files, session)
 
     } catch (e) {
@@ -322,7 +313,8 @@ class MediaLunaGenerateTool extends StructuredTool {
   }
 
   /**
-   * 异步生成：后台执行，完成后发送
+   * 异步模式：等待 prepare 阶段完成后返回，后台继续生成
+   * 生成完成后通过 session.send 发送结果
    */
   private async generateAsync(
     mediaLuna: any,
@@ -331,16 +323,74 @@ class MediaLunaGenerateTool extends StructuredTool {
     prompt: string,
     files: any[],
     session: Session | undefined
+  ): Promise<string> {
+    // 用于在 prepare 完成时 resolve 的 Promise
+    let resolvePrepare: (info: { taskId?: number; hints: string[] }) => void
+    const preparePromise = new Promise<{ taskId?: number; hints: string[] }>(resolve => {
+      resolvePrepare = resolve
+    })
+
+    // 用于保存最终结果，以便后台发送
+    let generationPromise: Promise<any>
+
+    // 启动生成（后台执行）
+    generationPromise = mediaLuna.generateByName({
+      channelName,
+      prompt,
+      files,
+      presetName,
+      session,
+      uid: (session?.user as any)?.id,
+      // prepare 阶段完成时调用
+      onPrepareComplete: async (beforeHints: string[]) => {
+        // 获取任务ID需要从 store 中获取，但这里无法直接访问
+        // 任务ID会在返回结果中体现
+        resolvePrepare!({ hints: beforeHints })
+      }
+    })
+
+    // 等待 prepare 完成或超时（防止无限等待）
+    const prepareTimeout = new Promise<{ taskId?: number; hints: string[] }>(resolve => {
+      setTimeout(() => resolve({ hints: [] }), 10000) // 10秒超时
+    })
+
+    const prepareInfo = await Promise.race([preparePromise, prepareTimeout])
+
+    // 后台继续等待生成完成并发送结果
+    this.handleAsyncResult(generationPromise, session)
+
+    // 构建返回信息
+    const infoParts: string[] = []
+
+    // 添加 before hints（如预扣费信息）
+    if (prepareInfo.hints.length > 0) {
+      infoParts.push(prepareInfo.hints.join('; '))
+    }
+
+    // 返回明确的状态信息
+    const statusInfo = [
+      `[TASK STARTED]`,
+      `Channel: ${channelName}`,
+      presetName ? `Preset: ${presetName}` : null,
+      infoParts.length > 0 ? `Info: ${infoParts.join(', ')}` : null,
+      `The image is now being generated in the background.`,
+      `The result will be sent directly to the user when complete.`,
+      `DO NOT call this tool again for the same request.`
+    ].filter(Boolean).join(' ')
+
+    return statusInfo
+  }
+
+  /**
+   * 处理异步生成结果
+   * 在后台等待生成完成，然后发送结果给用户
+   */
+  private async handleAsyncResult(
+    generationPromise: Promise<any>,
+    session: Session | undefined
   ): Promise<void> {
     try {
-      const result = await mediaLuna.generateByName({
-        channelName,
-        prompt,
-        files,
-        presetName,
-        session,
-        uid: (session?.user as any)?.id
-      })
+      const result = await generationPromise
 
       if (!result.success) {
         if (session) {
@@ -356,11 +406,35 @@ class MediaLunaGenerateTool extends StructuredTool {
         return
       }
 
-      // 发送结果
+      // 构建合并消息：图片/视频/音频 + 文字信息
+      const messageParts: string[] = []
+
+      // 添加媒体内容
       for (const asset of result.output) {
-        if (asset.kind === 'image' && asset.url && session) {
-          await session.send(`<image url="${asset.url}"/>`)
+        if (asset.kind === 'image' && asset.url) {
+          messageParts.push(`<image url="${asset.url}"/>`)
+        } else if (asset.kind === 'video' && asset.url) {
+          messageParts.push(`<video url="${asset.url}"/>`)
+        } else if (asset.kind === 'audio' && asset.url) {
+          messageParts.push(`<audio url="${asset.url}"/>`)
         }
+      }
+
+      // 添加耗时和计费信息
+      const infoParts: string[] = []
+      if (result.duration) {
+        infoParts.push(`耗时 ${(result.duration / 1000).toFixed(1)}s`)
+      }
+      if (result.hints?.after && result.hints.after.length > 0) {
+        infoParts.push(...result.hints.after)
+      }
+      if (infoParts.length > 0) {
+        messageParts.push(infoParts.join(' | '))
+      }
+
+      // 合并发送
+      if (session && messageParts.length > 0) {
+        await session.send(messageParts.join('\n'))
       }
     } catch (e) {
       this.logger.error(`[MediaLunaTool] Async generation error:`, e)

@@ -446,4 +446,173 @@ export class RemoteSyncService {
     this.stopAutoSync()
     this._etagCache.clear()
   }
+
+  /**
+   * 上传作品/模板到远程 Prompt-Manager
+   * @param uploadUrl 上传 URL（如 https://prompt.vioaki.xyz/upload）
+   * @param data 上传数据
+   * @returns 上传结果
+   */
+  async upload(uploadUrl: string, data: UploadData): Promise<UploadResult> {
+    // 检查 context 是否仍然有效
+    if (!this._ctx.scope.isActive) {
+      return {
+        success: false,
+        error: 'Context is inactive, cannot upload'
+      }
+    }
+
+    try {
+      this._logger.info('Uploading to: %s', uploadUrl)
+
+      // 构建 FormData
+      const formData = new FormData()
+
+      // 必填字段
+      formData.append('title', data.title)
+      formData.append('prompt', data.prompt)
+
+      // 主图片（必填）
+      if (data.image) {
+        formData.append('image', data.image)
+      } else if (data.imageUrl) {
+        // 从 URL 下载图片
+        const imageBlob = await this._fetchImageAsBlob(data.imageUrl)
+        if (imageBlob) {
+          formData.append('image', imageBlob, 'image.png')
+        } else {
+          return { success: false, error: 'Failed to fetch main image from URL' }
+        }
+      } else {
+        return { success: false, error: 'Main image is required' }
+      }
+
+      // 可选字段
+      formData.append('category', data.category || 'gallery')
+      formData.append('type', data.type || 'txt2img')
+
+      if (data.author) {
+        formData.append('author', data.author)
+      }
+      if (data.description) {
+        formData.append('description', data.description)
+      }
+      if (data.tags && data.tags.length > 0) {
+        formData.append('tags', data.tags.join(','))
+      }
+
+      // 参考图片（仅 img2img）
+      if (data.type === 'img2img' && data.referenceImages && data.referenceImages.length > 0) {
+        const layout: string[] = []
+
+        for (let i = 0; i < data.referenceImages.length; i++) {
+          const ref = data.referenceImages[i]
+          if (ref.isPlaceholder) {
+            layout.push('placeholder')
+          } else if (ref.blob) {
+            formData.append('ref_images', ref.blob, `ref_${i}.png`)
+            layout.push('new')
+          } else if (ref.url) {
+            const refBlob = await this._fetchImageAsBlob(ref.url)
+            if (refBlob) {
+              formData.append('ref_images', refBlob, `ref_${i}.png`)
+              layout.push('new')
+            }
+          }
+        }
+
+        if (layout.length > 0) {
+          formData.append('ref_layout', JSON.stringify(layout))
+        }
+      }
+
+      // 发送请求
+      const response = await fetch(uploadUrl, {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(60000) // 上传超时 60 秒
+      })
+
+      // Prompt-Manager 上传成功返回 HTML 页面，而非 JSON
+      // 检查是否成功（状态码 200 且响应中包含 success 相关内容）
+      if (response.ok) {
+        const responseText = await response.text()
+        // 检查是否是成功页面（包含 "发布成功" 或类似内容）
+        if (responseText.includes('发布成功') || responseText.includes('success')) {
+          this._logger.info('Upload successful')
+          return { success: true }
+        } else if (responseText.includes('待审核') || responseText.includes('pending')) {
+          this._logger.info('Upload successful, pending review')
+          return { success: true, pending: true }
+        }
+      }
+
+      // 上传失败
+      const errorText = await response.text().catch(() => response.statusText)
+      this._logger.error('Upload failed: %s %s', response.status, errorText)
+      return {
+        success: false,
+        error: `Upload failed: ${response.status} ${errorText.substring(0, 200)}`
+      }
+    } catch (error: any) {
+      this._logger.error('Upload error: %s', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
+  }
+
+  /** 从 URL 获取图片 Blob */
+  private async _fetchImageAsBlob(url: string): Promise<Blob | null> {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(30000)
+      })
+      if (!response.ok) return null
+      return await response.blob()
+    } catch (error) {
+      this._logger.warn('Failed to fetch image from %s: %s', url, error)
+      return null
+    }
+  }
+}
+
+/** 上传数据 */
+export interface UploadData {
+  /** 标题（必填） */
+  title: string
+  /** 提示词（必填） */
+  prompt: string
+  /** 主图片 Blob */
+  image?: Blob
+  /** 主图片 URL（如果没有 Blob，会从 URL 下载） */
+  imageUrl?: string
+  /** 分类：gallery（画廊）或 template（模板） */
+  category?: 'gallery' | 'template'
+  /** 类型：txt2img（文生图）或 img2img（图生图） */
+  type?: 'txt2img' | 'img2img'
+  /** 作者 */
+  author?: string
+  /** 备注描述 */
+  description?: string
+  /** 标签数组 */
+  tags?: string[]
+  /** 参考图片（仅 img2img） */
+  referenceImages?: Array<{
+    /** 图片 Blob */
+    blob?: Blob
+    /** 图片 URL（如果没有 Blob，会从 URL 下载） */
+    url?: string
+    /** 是否是占位符 */
+    isPlaceholder?: boolean
+  }>
+}
+
+/** 上传结果 */
+export interface UploadResult {
+  success: boolean
+  error?: string
+  /** 是否需要审核 */
+  pending?: boolean
 }

@@ -135,6 +135,17 @@
             :value="ch.id"
           ></el-option>
         </el-select>
+        <el-select
+          v-model="filter.mediaType"
+          placeholder="所有类型"
+          clearable
+          @change="handleFilterChange"
+          style="width: 110px"
+        >
+          <el-option label="图片" value="image"></el-option>
+          <el-option label="视频" value="video"></el-option>
+          <el-option label="音频" value="audio"></el-option>
+        </el-select>
         <el-input
           v-model="filter.uid"
           placeholder="用户 UID"
@@ -173,7 +184,7 @@
     </div>
 
     <!-- 可滚动的内容区域 -->
-    <div class="ml-view-content" :class="{ 'no-scroll': viewMode === 'list' }">
+    <div class="ml-view-content" :class="{ 'no-scroll': viewMode === 'list' }" ref="contentRef">
       <!-- 列表视图 -->
       <template v-if="viewMode === 'list'">
         <el-table :data="tasks" style="width: 100%" height="100%" class="task-table" @row-click="handleRowClick">
@@ -279,12 +290,14 @@
           <k-icon name="image" class="empty-icon"></k-icon>
           <p>暂无成功生成的图片</p>
         </div>
-        <div v-else class="ml-masonry">
-          <div
-            v-for="item in galleryItems"
-            :key="item.id + '-' + item.assetIndex"
-            class="ml-masonry-item"
-          >
+        <MasonryGrid
+          v-else
+          :items="galleryItems"
+          :item-key="(item) => item.id + '-' + item.assetIndex"
+          :min-column-width="220"
+          :gap="16"
+        >
+          <template #default="{ item }">
             <div class="gallery-item" @click="openGalleryDetail(item)">
               <div class="gallery-image-wrapper">
                 <img
@@ -317,8 +330,8 @@
               </div>
               <!-- 画廊模式下隐藏数据展示，纯图片浏览 -->
             </div>
-          </div>
-        </div>
+          </template>
+        </MasonryGrid>
       </template>
     </div>
 
@@ -510,13 +523,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { message } from '@koishijs/client'
 import { TaskData, ChannelConfig } from '../types'
 import { taskApi, channelApi } from '../api'
 import StatusBadge from './StatusBadge.vue'
 import ImageLightbox from './ImageLightbox.vue'
 import AudioPlayer from './AudioPlayer.vue'
+import MasonryGrid from './MasonryGrid.vue'
+
+// 内容区域引用（用于滚动到顶部）
+const contentRef = ref<HTMLElement | null>(null)
 
 // 视图模式
 const viewMode = ref<'list' | 'gallery'>('list')
@@ -536,7 +553,8 @@ const pageSize = ref(20)
 const filter = ref({
   status: '' as string,
   uid: '' as string,
-  channelId: undefined as number | undefined
+  channelId: undefined as number | undefined,
+  mediaType: '' as string  // 媒体类型筛选: image/audio/video
 })
 
 // 渠道列表（用于下拉筛选）
@@ -655,12 +673,24 @@ const setTimeRange = (range: 'all' | 'today') => {
   timeRange.value = range
   page.value = 1  // 切换时间范围时重置到第一页
   fetchData()
+  // 滚动到顶部
+  nextTick(() => {
+    if (contentRef.value) {
+      contentRef.value.scrollTop = 0
+    }
+  })
 }
 
 // 筛选变化处理
 const handleFilterChange = () => {
   page.value = 1  // 筛选变化时重置到第一页
   fetchData()
+  // 滚动到顶部
+  nextTick(() => {
+    if (contentRef.value) {
+      contentRef.value.scrollTop = 0
+    }
+  })
 }
 
 // 加载渠道列表
@@ -697,6 +727,9 @@ const fetchData = async () => {
     if (filter.value.channelId !== undefined && filter.value.channelId !== null) {
       query.channelId = filter.value.channelId
     }
+    if (filter.value.mediaType) {
+      query.mediaType = filter.value.mediaType
+    }
 
     // stats 也需要使用相同的时间范围
     const statsParams: { channelId?: number, startDate?: string } = {}
@@ -724,12 +757,24 @@ const handlePageSizeChange = () => {
   // 改变每页条数时，重置到第一页
   page.value = 1
   fetchData()
+  // 滚动到顶部
+  nextTick(() => {
+    if (contentRef.value) {
+      contentRef.value.scrollTop = 0
+    }
+  })
 }
 
 const goToPage = (newPage: number) => {
   if (newPage >= 1 && newPage <= totalPages.value) {
     page.value = newPage
     fetchData()
+    // 翻页后滚动到顶部
+    nextTick(() => {
+      if (contentRef.value) {
+        contentRef.value.scrollTop = 0
+      }
+    })
   }
 }
 

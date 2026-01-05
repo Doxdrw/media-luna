@@ -1130,8 +1130,101 @@ async function executeGenerate(
 
 /**
  * 格式化生成结果
+ * 根据输出类型使用不同的展示方式：
+ * - 图片/文本：常规格式，带任务ID和计费信息
+ * - 视频：使用合并转发消息
+ * - 纯音频：只发送音频元素，不带任务ID和计费信息
  */
 function formatResult(result: GenerationResult): string {
+  // 失败情况：始终显示任务ID和错误信息
+  if (!result.success) {
+    const messages: string[] = []
+    if (result.taskId) {
+      messages.push(`「${result.taskId}」`)
+    }
+    messages.push(`生成失败: ${result.error || '未知错误'}`)
+    appendFooterInfo(messages, result)
+    return messages.join('\n')
+  }
+
+  // 无输出情况
+  if (!result.output || result.output.length === 0) {
+    const messages: string[] = []
+    if (result.taskId) {
+      messages.push(`「${result.taskId}」`)
+    }
+    messages.push(`生成完成，但没有输出`)
+    appendFooterInfo(messages, result)
+    return messages.join('\n')
+  }
+
+  // 分析输出类型
+  const hasVideo = result.output.some(a => a.kind === 'video' && a.url)
+  const hasAudio = result.output.some(a => a.kind === 'audio' && a.url)
+  const hasImage = result.output.some(a => a.kind === 'image' && a.url)
+  const hasText = result.output.some(a => a.kind === 'text' && a.content)
+
+  // 纯音频输出：只发送音频元素，不带任何附加信息
+  if (hasAudio && !hasVideo && !hasImage && !hasText) {
+    const audioElements: string[] = []
+    for (const asset of result.output) {
+      if (asset.kind === 'audio' && asset.url) {
+        audioElements.push(`<audio url="${asset.url}"/>`)
+      }
+    }
+    return audioElements.join('\n')
+  }
+
+  // 包含视频：使用合并转发消息
+  if (hasVideo) {
+    return formatVideoResult(result)
+  }
+
+  // 常规输出：图片/文本，带任务ID和计费信息
+  return formatStandardResult(result)
+}
+
+/**
+ * 格式化视频输出（使用合并转发消息）
+ */
+function formatVideoResult(result: GenerationResult): string {
+  const forwardMessages: string[] = []
+
+  // 第一条消息：任务信息
+  const infoLines: string[] = []
+  if (result.taskId) {
+    infoLines.push(`任务「${result.taskId}」`)
+  }
+  if (result.duration) {
+    infoLines.push(`耗时 ${formatDuration(result.duration)}`)
+  }
+  if (result.hints?.after && result.hints.after.length > 0) {
+    infoLines.push(...result.hints.after)
+  }
+  if (infoLines.length > 0) {
+    forwardMessages.push(`<message>${infoLines.join(' | ')}</message>`)
+  }
+
+  // 输出内容
+  for (const asset of result.output!) {
+    if (asset.kind === 'video' && asset.url) {
+      forwardMessages.push(`<message><video url="${asset.url}"/></message>`)
+    } else if (asset.kind === 'image' && asset.url) {
+      forwardMessages.push(`<message><image url="${asset.url}"/></message>`)
+    } else if (asset.kind === 'audio' && asset.url) {
+      forwardMessages.push(`<message><audio url="${asset.url}"/></message>`)
+    } else if (asset.kind === 'text' && asset.content) {
+      forwardMessages.push(`<message>${asset.content}</message>`)
+    }
+  }
+
+  return `<message forward>${forwardMessages.join('')}</message>`
+}
+
+/**
+ * 格式化标准输出（图片/文本）
+ */
+function formatStandardResult(result: GenerationResult): string {
   const messages: string[] = []
 
   // 任务 ID 放在最开始
@@ -1139,28 +1232,16 @@ function formatResult(result: GenerationResult): string {
     messages.push(`「${result.taskId}」`)
   }
 
-  if (!result.success) {
-    messages.push(`生成失败: ${result.error || '未知错误'}`)
-    // 底部信息
-    appendFooterInfo(messages, result)
-    return messages.join('\n')
-  }
-
-  if (!result.output || result.output.length === 0) {
-    messages.push(`生成完成，但没有输出`)
-    // 底部信息
-    appendFooterInfo(messages, result)
-    return messages.join('\n')
-  }
-
   // 构建输出消息
-  for (const asset of result.output) {
+  for (const asset of result.output!) {
     if (asset.kind === 'image' && asset.url) {
       messages.push(`<image url="${asset.url}"/>`)
     } else if (asset.kind === 'audio' && asset.url) {
       messages.push(`<audio url="${asset.url}"/>`)
     } else if (asset.kind === 'video' && asset.url) {
       messages.push(`<video url="${asset.url}"/>`)
+    } else if (asset.kind === 'text' && asset.content) {
+      messages.push(asset.content)
     }
   }
 

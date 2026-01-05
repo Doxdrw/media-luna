@@ -129,7 +129,29 @@ export const presetApi = {
   copy: (id: number) => call<PresetData>('media-luna/presets/copy', { id }),
   matching: (channelId: number) => call<PresetData[]>('media-luna/presets/matching', { channelId }),
   tags: () => call<string[]>('media-luna/presets/tags'),
-  getByTags: (tags: string[], matchAll?: boolean) => call<PresetData[]>('media-luna/presets/by-tags', { tags, matchAll })
+  getByTags: (tags: string[], matchAll?: boolean) => call<PresetData[]>('media-luna/presets/by-tags', { tags, matchAll }),
+  // 上传相关
+  getUploadConfig: () => call<{ uploadUrl: string, defaultAuthor: string, enabled: boolean }>('media-luna/presets/upload-config'),
+  upload: (data: {
+    title: string
+    prompt: string
+    imageUrl?: string
+    category?: 'gallery' | 'template'
+    type?: 'txt2img' | 'img2img'
+    author?: string
+    description?: string
+    tags?: string[]
+    referenceImages?: Array<{ url?: string; isPlaceholder?: boolean }>
+  }) => call<{ pending?: boolean, message: string }>('media-luna/presets/upload', data),
+  uploadTask: (data: {
+    taskId: number
+    assetIndex?: number
+    title: string
+    category?: 'gallery' | 'template'
+    author?: string
+    description?: string
+    tags?: string[]
+  }) => call<{ pending?: boolean, message: string }>('media-luna/presets/upload-task', data)
 }
 
 // 任务 API

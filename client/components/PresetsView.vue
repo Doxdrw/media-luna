@@ -138,6 +138,19 @@
           <el-table-column width="50" align="center" fixed="right">
             <template #default="{ row }">
               <span
+                v-if="row.source === 'user' && row.thumbnail"
+                class="upload-btn"
+                title="上传到云端"
+                @click.stop="handleUpload(row)"
+              >
+                <k-icon name="upload"></k-icon>
+              </span>
+            </template>
+          </el-table-column>
+
+          <el-table-column width="50" align="center" fixed="right">
+            <template #default="{ row }">
+              <span
                 v-if="row.source === 'user'"
                 class="delete-btn"
                 title="删除"
@@ -156,8 +169,14 @@
           <k-icon name="inbox" class="empty-icon"></k-icon>
           <p>暂无预设</p>
         </div>
-        <div v-else class="ml-masonry">
-          <div v-for="preset in displayPresets" :key="preset.id" class="ml-masonry-item">
+        <MasonryGrid
+          v-else
+          :items="displayPresets"
+          :item-key="(preset) => preset.id"
+          :min-column-width="200"
+          :gap="16"
+        >
+          <template #default="{ item: preset }">
             <div class="preset-card" @click="openEditDialog(preset)">
               <!-- 缩略图 - 卡片主体 -->
               <div class="card-thumb" v-if="preset.thumbnail">
@@ -167,8 +186,7 @@
                   <div class="overlay-controls" @click.stop>
                     <el-switch v-model="preset.enabled" @change="handleToggle(preset)" class="overlay-switch" />
                     <button class="overlay-btn" title="复制为新预设" @click="handleCopy(preset)">
-                      <k-icon name="copy"></k-icon>
-                      <span>复制</span>
+                      <k-icon name="clone"></k-icon>
                     </button>
                     <button
                       v-if="preset.source === 'user'"
@@ -177,6 +195,9 @@
                       @click="handleDelete(preset)"
                     >
                       <k-icon name="delete"></k-icon>
+                    </button>
+                    <button class="overlay-btn upload" v-if="preset.source === 'user'" title="上传到云端" @click="handleUpload(preset)">
+                      <k-icon name="upload"></k-icon>
                     </button>
                   </div>
                 </div>
@@ -192,8 +213,7 @@
                   <div class="overlay-controls" @click.stop>
                     <el-switch v-model="preset.enabled" @change="handleToggle(preset)" class="overlay-switch" />
                     <button class="overlay-btn" title="复制为新预设" @click="handleCopy(preset)">
-                      <k-icon name="copy"></k-icon>
-                      <span>复制</span>
+                      <k-icon name="clone"></k-icon>
                     </button>
                     <button
                       v-if="preset.source === 'user'"
@@ -221,8 +241,8 @@
                 {{ preset.source === 'api' ? '远程' : '本地' }}
               </div>
             </div>
-          </div>
-        </div>
+          </template>
+        </MasonryGrid>
       </template>
     </div>
 
@@ -304,6 +324,21 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- 上传对话框 -->
+    <UploadDialog
+      v-if="uploadPreset"
+      v-model="uploadDialogVisible"
+      mode="preset"
+      :preset-data="{
+        name: uploadPreset.name,
+        promptTemplate: uploadPreset.promptTemplate,
+        thumbnail: uploadPreset.thumbnail,
+        tags: uploadPreset.tags,
+        referenceImages: uploadPreset.referenceImages
+      }"
+      @success="loadPresets"
+    />
   </div>
 </template>
 
@@ -315,6 +350,8 @@ import { presetApi } from '../api'
 import TagInput from './TagInput.vue'
 import JsonEditor from './JsonEditor.vue'
 import ImageUpload from './ImageUpload.vue'
+import MasonryGrid from './MasonryGrid.vue'
+import UploadDialog from './UploadDialog.vue'
 
 type ViewMode = 'list' | 'card'
 
@@ -460,6 +497,20 @@ const handleDelete = async (preset: PresetData) => {
   } catch {
     message.error('删除失败')
   }
+}
+
+// 上传相关
+const uploadDialogVisible = ref(false)
+const uploadPreset = ref<PresetData | null>(null)
+
+const handleUpload = (preset: PresetData) => {
+  // 需要有缩略图才能上传
+  if (!preset.thumbnail) {
+    message.warning('预设没有缩略图，无法上传')
+    return
+  }
+  uploadPreset.value = preset
+  uploadDialogVisible.value = true
 }
 
 const handleSubmit = async () => {
@@ -698,6 +749,23 @@ onMounted(fetchData)
   opacity: 0.5;
 }
 
+.upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--k-color-text-description);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.upload-btn:hover {
+  color: var(--k-color-primary, #409eff);
+  background: var(--k-color-primary-light, rgba(64, 158, 255, 0.1));
+}
+
 .delete-btn {
   display: flex;
   align-items: center;
@@ -912,6 +980,10 @@ onMounted(fetchData)
 
 .overlay-btn.danger:hover {
   background: var(--k-color-error, #f56c6c);
+}
+
+.overlay-btn.upload:hover {
+  background: var(--k-color-primary, #409eff);
 }
 
 /* 参考图徽章 */
