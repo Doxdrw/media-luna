@@ -99,7 +99,8 @@
 .theme-material .pop-input:focus,
 .theme-material .pop-select:focus,
 .theme-material .pop-textarea:focus {
-    border-color: #212121;
+    border-color: #2196F3;
+    /* Blue Focus */
     box-shadow: none;
     background: #ffffff;
 }
@@ -183,7 +184,13 @@
 /* Fix for CATEGORY TABS & SIDEBAR TABS (Create Channel Dialog) */
 /* User requested: White Background + Black Text for selected items + BLUE Border */
 .theme-material .category-tab.active,
-.theme-material .tab-item.active {
+.theme-material .tab-item.active,
+.theme-material .mode-btn.active,
+.theme-material .filter-tag.active,
+.theme-material .filter-trigger.active,
+.theme-material .dropdown-trigger.active,
+.theme-material .selection-trigger.active,
+.theme-material .sort-trigger.active {
     background-color: #ffffff !important;
     /* White Background */
     color: #000000 !important;
@@ -197,7 +204,8 @@
 /* Fix for BADGES inside active tabs (eliminate black pills) */
 .theme-material .category-tab.active .tab-badge,
 .theme-material .tab-item.active .tab-badge,
-.theme-material .category-tab.active .category-count {
+.theme-material .category-tab.active .category-count,
+.theme-material .filter-trigger.active .count-badge {
     background-color: #ffffff !important;
     color: #000000 !important;
     border: 1px solid #2196F3 !important;
