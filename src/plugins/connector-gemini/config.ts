@@ -64,6 +64,13 @@ export const connectorFields: ConnectorField[] = [
     description: '生成图片的输出格式（部分 API 端点可能不支持此参数）'
   },
   {
+    key: 'forceImageOutput',
+    label: '强制图片输出',
+    type: 'boolean',
+    default: false,
+    description: '启用后添加 responseModalities: ["IMAGE"] 参数，强制模型输出图片。部分 API 端点可能不兼容此参数'
+  },
+  {
     key: 'enableGoogleSearch',
     label: '启用谷歌搜索',
     type: 'boolean',
@@ -96,6 +103,13 @@ export const connectorFields: ConnectorField[] = [
     type: 'boolean',
     default: true,
     description: '高分辨率请求时，API 会返回思考过程的临时图片，启用后自动过滤这些图片，只保留最终结果'
+  },
+  {
+    key: 'textOnlyAsSuccess',
+    label: '纯文字视为成功',
+    type: 'boolean',
+    default: false,
+    description: '当模型只返回文字（无图片）时，是否视为生成成功。关闭则会报错（不扣费），开启则正常返回文字内容（扣费）'
   },
   {
     key: 'timeout',

@@ -28,10 +28,12 @@ async function generate(
     aspectRatio,
     imageSize,
     outputMimeType,
+    forceImageOutput,
     enableGoogleSearch,
     thinkingLevel,
     includeThoughts,
     filterThoughtImages,
+    textOnlyAsSuccess,
     timeout
   } = config
 
@@ -87,12 +89,16 @@ async function generate(
   const requestBody: any = {
     contents: [
       {
+        role: 'user',
         parts
       }
     ],
-    generationConfig: {
-      responseModalities: ['IMAGE']
-    }
+    generationConfig: {}
+  }
+
+  // 仅在启用时添加 responseModalities（部分 API 可能不兼容）
+  if (forceImageOutput) {
+    requestBody.generationConfig.responseModalities = ['IMAGE']
   }
 
   // 仅在配置了值时才添加 imageConfig
@@ -176,6 +182,17 @@ async function generate(
             }
           })
         }
+
+        // 处理文本内容（非思考过程）
+        if (part.text && !part.thought) {
+          assets.push({
+            kind: 'text',
+            content: part.text,
+            meta: {
+              model
+            }
+          })
+        }
       }
     }
 
@@ -184,16 +201,20 @@ async function generate(
     )
 
     if (assets.length === 0) {
-      // 检查是否有文本错误信息
-      const textParts = candidates.flatMap((c: any) => c.content?.parts || [])
-        .filter((p: any) => p.text)
-        .map((p: any) => p.text)
+      throw new Error('No content generated in response')
+    }
 
-      if (textParts.length > 0) {
-        throw new Error(`Gemini API returned text instead of image: ${textParts.join('\n')}`)
-      }
+    // 检查是否只有文字输出（无图片/视频/音频）
+    const hasMedia = assets.some(a => a.kind === 'image' || a.kind === 'video' || a.kind === 'audio')
+    const hasTextOnly = !hasMedia && assets.some(a => a.kind === 'text')
 
-      throw new Error('No image generated in response')
+    if (hasTextOnly && !textOnlyAsSuccess) {
+      // 纯文字输出且配置为不视为成功，抛出错误（不扣费）
+      const textContent = assets
+        .filter(a => a.kind === 'text')
+        .map(a => a.content)
+        .join('\n')
+      throw new Error(`模型返回纯文字（无图片）: ${textContent.substring(0, 200)}${textContent.length > 200 ? '...' : ''}`)
     }
 
     return assets

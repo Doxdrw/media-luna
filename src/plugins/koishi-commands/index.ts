@@ -720,18 +720,45 @@ function registerChannelCommand(
 }
 
 /**
+ * 收集结果统计
+ */
+interface ExtractResult {
+  images: number      // 成功收集的图片数
+  avatars: number     // 成功收集的头像数
+  failed: number      // 失败的数量
+  skipped: number     // 跳过的数量（重复URL）
+  failedUrls: string[] // 失败的URL列表
+}
+
+/**
  * 消息内容提取器
- * 统一处理图片、at、引用消息等元素的提取
+ * 针对 OneBot 平台优化，统一处理图片、at、引用消息等元素的提取
  */
 class MessageExtractor {
   private ctx: any
   private logger: any
   private state: CollectState
+  private result: ExtractResult
 
   constructor(ctx: any, logger: any, state: CollectState) {
     this.ctx = ctx
     this.logger = logger
     this.state = state
+    this.result = { images: 0, avatars: 0, failed: 0, skipped: 0, failedUrls: [] }
+  }
+
+  /**
+   * 获取本次提取的结果统计
+   */
+  getResult(): ExtractResult {
+    return { ...this.result }
+  }
+
+  /**
+   * 重置结果统计（用于收集模式中每条消息）
+   */
+  resetResult(): void {
+    this.result = { images: 0, avatars: 0, failed: 0, skipped: 0, failedUrls: [] }
   }
 
   /**
@@ -749,7 +776,7 @@ class MessageExtractor {
 
   /**
    * 从 Session 只提取媒体内容（图片、at、引用），不提取文本
-   * 用于第一次提取，因为文本中可能包含预设名需要单独处理
+   * 顺序：引用图片 → 当前图片 → @头像（符合用户直觉）
    */
   async extractMedia(session: Session | undefined): Promise<void> {
     if (!session?.elements) return
@@ -760,26 +787,45 @@ class MessageExtractor {
       this.logger.debug('Quote message: %s', JSON.stringify(session.quote, null, 2))
     }
 
-    // 提取图片
-    await this.extractImages(session.elements)
-
-    // 提取 at 用户头像
-    await this.extractAtAvatars(session)
-
-    // 提取引用消息中的图片（包括 session.quote）
+    // 1. 先提取引用消息中的图片（引用的内容是"原始素材"，应该在前）
     await this.extractFromQuote(session)
 
-    this.logger.debug('Extracted files count: %d, urls: %s', this.state.files.length, [...this.state.processedUrls].join(', '))
+    // 2. 提取当前消息的图片
+    await this.extractImages(session.elements)
+
+    // 3. 最后提取 @ 用户头像
+    await this.extractAtAvatars(session)
+
+    this.logger.info(
+      'Extract result: %d images, %d avatars, %d failed, %d skipped. Total files: %d',
+      this.result.images, this.result.avatars, this.result.failed, this.result.skipped,
+      this.state.files.length
+    )
+
+    if (this.result.failedUrls.length > 0) {
+      this.logger.warn('Failed URLs: %s', this.result.failedUrls.join(', '))
+    }
   }
 
   /**
-   * 从元素数组中提取图片（排除引用中的图片）
+   * 从元素数组中提取图片
+   * OneBot 平台图片元素：type = 'img' 或 'image'
+   * 属性可能是 src、url、file 等
    */
   async extractImages(elements: any[]): Promise<void> {
-    // 只提取顶层图片，排除 quote 内的图片（避免重复）
     for (const el of elements) {
+      // 跳过 quote 元素（引用图片单独处理）
+      if (el.type === 'quote') continue
+
       if (el.type === 'img' || el.type === 'image') {
-        await this.fetchImage(el.attrs?.src || el.attrs?.url, 'input')
+        // OneBot 可能的属性：src, url, file
+        const imageUrl = el.attrs?.src || el.attrs?.url || el.attrs?.file
+        if (imageUrl) {
+          const success = await this.fetchImage(imageUrl, 'image')
+          if (success) this.result.images++
+        } else {
+          this.logger.warn('Image element has no URL, attrs: %s', JSON.stringify(el.attrs))
+        }
       }
     }
   }
@@ -798,8 +844,13 @@ class MessageExtractor {
           const user = await session.bot.getUser(userId)
           const avatarUrl = user?.avatar
           if (avatarUrl) {
-            await this.fetchImage(avatarUrl, `avatar_${userId}`)
-            this.logger.debug('Extracted avatar for user %s', userId)
+            const success = await this.fetchImage(avatarUrl, 'avatar')
+            if (success) {
+              this.result.avatars++
+              this.logger.debug('Extracted avatar for user %s', userId)
+            }
+          } else {
+            this.logger.debug('User %s has no avatar', userId)
           }
         } catch (e) {
           this.logger.warn('Failed to get user info for %s: %s', userId, e)
@@ -810,7 +861,7 @@ class MessageExtractor {
 
   /**
    * 从引用消息中提取图片
-   * 支持两种情况：
+   * 支持：
    * 1. session.elements 中的 quote 元素（内嵌引用）
    * 2. session.quote 属性（独立的被引用消息）
    */
@@ -819,27 +870,60 @@ class MessageExtractor {
     if (session.elements) {
       for (const el of session.elements) {
         if (el.type === 'quote' && el.children && el.children.length > 0) {
-          for (const child of el.children) {
-            if (child.type === 'img' || child.type === 'image') {
-              await this.fetchImage(child.attrs?.src || child.attrs?.url, 'quote')
-            }
-          }
+          this.logger.debug('Found quote element with %d children', el.children.length)
+          await this.extractImagesFromElements(el.children, 'quote')
         }
       }
     }
 
     // 2. 从 session.quote 中提取图片（被引用消息的内容）
     const quote = session.quote as any
-    if (quote?.elements) {
-      this.logger.debug('Extracting from session.quote.elements')
-      for (const el of quote.elements) {
-        if (el.type === 'img' || el.type === 'image') {
-          await this.fetchImage(el.attrs?.src || el.attrs?.url, 'quote')
+    if (quote?.elements && Array.isArray(quote.elements)) {
+      this.logger.debug('Found session.quote with %d elements', quote.elements.length)
+      await this.extractImagesFromElements(quote.elements, 'quote')
+    } else if (quote?.content) {
+      // OneBot 某些情况下可能只有 content 字符串
+      this.logger.debug('Quote has content but no elements: %s', quote.content)
+      // 尝试从 content 中解析图片 URL（CQ码格式）
+      await this.extractFromCQCode(quote.content, 'quote')
+    }
+  }
+
+  /**
+   * 从元素数组中提取所有图片（通用方法）
+   */
+  private async extractImagesFromElements(elements: any[], prefix: string): Promise<void> {
+    for (const el of elements) {
+      if (el.type === 'img' || el.type === 'image') {
+        const imageUrl = el.attrs?.src || el.attrs?.url || el.attrs?.file
+        if (imageUrl) {
+          const success = await this.fetchImage(imageUrl, prefix)
+          if (success) this.result.images++
         }
       }
-    } else if (quote?.content) {
-      // 有些平台可能只有 content 字符串，尝试解析
-      this.logger.debug('Quote has content but no elements: %s', quote.content)
+      // 递归处理嵌套元素
+      if (el.children && Array.isArray(el.children) && el.children.length > 0) {
+        await this.extractImagesFromElements(el.children, prefix)
+      }
+    }
+  }
+
+  /**
+   * 从 CQ 码字符串中提取图片 URL
+   * 格式：[CQ:image,file=xxx,url=xxx]
+   */
+  private async extractFromCQCode(content: string, prefix: string): Promise<void> {
+    // 匹配 [CQ:image,...] 格式
+    const cqImageRegex = /\[CQ:image[^\]]*(?:url|file)=([^\],\]]+)[^\]]*\]/gi
+    let match: RegExpExecArray | null
+
+    while ((match = cqImageRegex.exec(content)) !== null) {
+      const url = match[1]
+      if (url) {
+        this.logger.debug('Extracted image URL from CQ code: %s', url)
+        const success = await this.fetchImage(url, prefix)
+        if (success) this.result.images++
+      }
     }
   }
 
@@ -853,25 +937,103 @@ class MessageExtractor {
 
   /**
    * 获取图片并添加到 state
+   * 返回是否成功
    */
   async fetchImage(url: string | undefined, prefix: string): Promise<boolean> {
-    if (!url || this.state.processedUrls.has(url)) return false
-
-    this.state.processedUrls.add(url)
-    try {
-      const response = await this.ctx.http.get(url, { responseType: 'arraybuffer' })
-      const buffer = Buffer.from(response)
-      const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-      this.state.files.push({
-        data: arrayBuffer,
-        mime: 'image/png',
-        filename: `${prefix}_${this.state.files.length}.png`
-      })
-      return true
-    } catch (e) {
-      this.logger.warn('Failed to fetch image from %s: %s', prefix, e)
+    if (!url) {
+      this.logger.debug('fetchImage called with empty URL')
       return false
     }
+
+    // 检查是否已处理过（去重）
+    if (this.state.processedUrls.has(url)) {
+      this.logger.debug('Skipping duplicate URL: %s', url.substring(0, 100))
+      this.result.skipped++
+      return false
+    }
+
+    this.state.processedUrls.add(url)
+
+    try {
+      // 设置超时，避免卡住
+      const response = await this.ctx.http.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 30000  // 30秒超时
+      })
+
+      if (!response || response.byteLength === 0) {
+        this.logger.warn('Empty response for image: %s', url.substring(0, 100))
+        this.result.failed++
+        this.result.failedUrls.push(url.substring(0, 100))
+        return false
+      }
+
+      const buffer = Buffer.from(response)
+      const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+
+      // 尝试检测 MIME 类型
+      const mime = this.detectMimeType(buffer) || 'image/png'
+
+      this.state.files.push({
+        data: arrayBuffer,
+        mime,
+        filename: `${prefix}_${this.state.files.length}.${this.getExtFromMime(mime)}`
+      })
+
+      this.logger.debug('Fetched image: %s (%d bytes, %s)', prefix, buffer.length, mime)
+      return true
+    } catch (e: any) {
+      const errorMsg = e?.message || String(e)
+      this.logger.warn('Failed to fetch image [%s]: %s (URL: %s)', prefix, errorMsg, url.substring(0, 100))
+      this.result.failed++
+      this.result.failedUrls.push(url.substring(0, 100))
+      return false
+    }
+  }
+
+  /**
+   * 检测图片 MIME 类型（通过魔数）
+   */
+  private detectMimeType(buffer: Buffer): string | null {
+    if (buffer.length < 4) return null
+
+    // PNG: 89 50 4E 47
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+      return 'image/png'
+    }
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+      return 'image/jpeg'
+    }
+    // GIF: 47 49 46 38
+    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) {
+      return 'image/gif'
+    }
+    // WebP: 52 49 46 46 ... 57 45 42 50
+    if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+        buffer.length > 11 && buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+      return 'image/webp'
+    }
+    // BMP: 42 4D
+    if (buffer[0] === 0x42 && buffer[1] === 0x4D) {
+      return 'image/bmp'
+    }
+
+    return null
+  }
+
+  /**
+   * 根据 MIME 类型获取扩展名
+   */
+  private getExtFromMime(mime: string): string {
+    const map: Record<string, string> = {
+      'image/png': 'png',
+      'image/jpeg': 'jpg',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+      'image/bmp': 'bmp'
+    }
+    return map[mime] || 'png'
   }
 
   /**
@@ -1040,8 +1202,15 @@ async function enterCollectMode(
       }
 
       // 从消息中提取所有内容
+      extractor.resetResult()  // 重置统计
       const text = await extractor.extractAll(sess)
       extractor.addPrompt(text)
+
+      // 只在有图片收集失败时反馈，避免刷屏
+      const result = extractor.getResult()
+      if (result.failed > 0) {
+        sess.send(`⚠️ ${result.failed}张图片收集失败，当前共${state.files.length}张`).catch(() => {})
+      }
 
       // 不传递给下一个中间件，阻止其他指令处理
     }, true) // true 表示优先级高

@@ -355,7 +355,9 @@ export function createRequestMiddleware(requestService: RequestService) {
       const { channel, prompt, files } = context
 
       if (!channel) {
-        context.setMiddlewareLog('request', { error: 'No channel configuration found' })
+        const errorMsg = 'No channel configuration found'
+        context.setMiddlewareLog('request', { error: errorMsg })
+        context.error = errorMsg
         return Status.STOP
       }
 
@@ -378,6 +380,8 @@ export function createRequestMiddleware(requestService: RequestService) {
           errorCode: result.errorCode,
           request: result.requestLog
         })
+        // 将错误信息设置到上下文，确保用户能看到错误消息
+        context.error = result.error || '请求失败'
         return Status.STOP
       }
 

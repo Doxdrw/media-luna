@@ -160,6 +160,32 @@ export function registerTaskApi(ctx: Context): void {
     }
   })
 
+  // 删除指定状态的任务（如删除所有失败任务）
+  console.addListener('media-luna/tasks/delete-by-status', async ({ status }: { status: TaskStatus }) => {
+    try {
+      const { tasks, error } = getTaskService()
+      if (error) return error
+
+      if (!status) {
+        return { success: false, error: 'Status is required' }
+      }
+
+      const validStatuses: TaskStatus[] = ['pending', 'processing', 'success', 'failed']
+      if (!validStatuses.includes(status)) {
+        return { success: false, error: `Invalid status: ${status}` }
+      }
+
+      const count = await tasks.deleteByStatus(status)
+
+      return {
+        success: true,
+        data: { deleted: count, status }
+      }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    }
+  })
+
   // 获取用户最近的任务
   console.addListener('media-luna/tasks/recent', async function (this: any, { uid, limit }: { uid?: number, limit?: number }) {
     try {

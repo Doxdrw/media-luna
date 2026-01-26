@@ -98,6 +98,14 @@
           <div class="filter-divider"></div>
         </template>
         <button class="pop-btn small" @click="fetchData" title="刷新">🔄</button>
+        <button
+          class="pop-btn small danger"
+          @click="openDeleteFailedDialog"
+          :disabled="!stats || stats.byStatus.failed === 0"
+          title="删除所有失败任务"
+        >
+          ⚠️ 删除失败
+        </button>
         <button class="pop-btn small danger" @click="openCleanupDialog">
           🗑️ 清理
         </button>
@@ -402,6 +410,34 @@
       </div>
     </Teleport>
 
+    <!-- 删除失败任务确认对话框 -->
+    <Teleport to="#ml-teleport-container" defer>
+      <div v-if="deleteFailedVisible" class="modal-overlay" @click.self="deleteFailedVisible = false">
+        <div class="modal-dialog small pop-card no-hover">
+          <div class="modal-header">
+            <h3>删除失败任务</h3>
+            <button class="modal-close" @click="deleteFailedVisible = false">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="delete-confirm-content">
+              <div class="delete-icon-wrapper">⚠️</div>
+              <div class="delete-info">
+                <div class="delete-title">确定删除所有失败任务？</div>
+                <div class="delete-task-id" v-if="stats">共 {{ stats.byStatus.failed }} 条失败任务</div>
+              </div>
+              <div class="delete-warning">
+                ⚠️ 此操作不可恢复
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="pop-btn" @click="deleteFailedVisible = false">取消</button>
+            <button class="pop-btn danger" @click="confirmDeleteFailed">确认删除</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- 删除确认对话框 -->
     <Teleport to="#ml-teleport-container" defer>
       <div v-if="deleteConfirmVisible" class="modal-overlay" @click.self="deleteConfirmVisible = false">
@@ -527,6 +563,9 @@ const lightboxIndex = ref(0)
 // 清理
 const cleanupVisible = ref(false)
 const cleanupDays = ref(30)
+
+// 删除失败任务
+const deleteFailedVisible = ref(false)
 
 // 删除确认
 const deleteConfirmVisible = ref(false)
@@ -756,6 +795,22 @@ const confirmCleanup = async () => {
     fetchData()
   } catch (e) {
     alert('清理失败')
+  }
+}
+
+// 删除失败任务
+const openDeleteFailedDialog = () => {
+  deleteFailedVisible.value = true
+}
+
+const confirmDeleteFailed = async () => {
+  try {
+    const res = await taskApi.deleteByStatus('failed')
+    alert(`成功删除 ${res.deleted} 条失败任务`)
+    deleteFailedVisible.value = false
+    fetchData()
+  } catch (e) {
+    alert('删除失败')
   }
 }
 

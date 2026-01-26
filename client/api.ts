@@ -162,6 +162,7 @@ export const taskApi = {
   delete: (id: number) => call<void>('media-luna/tasks/delete', { id }),
   stats: (params?: { channelId?: number, startDate?: string }) => call<TaskStats>('media-luna/tasks/stats', params),
   cleanup: (days?: number) => call<{ deleted: number, beforeDate: string }>('media-luna/tasks/cleanup', { days }),
+  deleteByStatus: (status: string) => call<{ deleted: number, status: string }>('media-luna/tasks/delete-by-status', { status }),
   recent: (userId: number, limit?: number) => call<TaskData[]>('media-luna/tasks/recent', { userId, limit }),
   /** 获取当前用户的任务列表 */
   my: (params?: { channelId?: number, status?: string, limit?: number, offset?: number }) =>

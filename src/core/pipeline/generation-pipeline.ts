@@ -186,6 +186,17 @@ export class GenerationPipeline {
       }
     }
 
+    // 如果中间件设置了 context.error（例如请求失败），也返回错误结果
+    if (context.error) {
+      return {
+        success: false,
+        error: context.error,
+        taskId: context.taskId,
+        duration,
+        hints: hasHints ? hints : undefined
+      }
+    }
+
     this._logger.info(`Pipeline completed in ${duration}ms, output: ${context.output?.length ?? 0} assets`)
 
     return {

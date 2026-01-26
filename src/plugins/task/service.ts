@@ -231,6 +231,20 @@ export class TaskService {
     return true
   }
 
+  /** 按状态删除任务 */
+  async deleteByStatus(status: TaskStatus): Promise<number> {
+    const result = await this._ctx.database.get('medialuna_task', { status })
+    const ids = result.map(r => r.id)
+
+    if (ids.length > 0) {
+      for (const id of ids) {
+        await this._ctx.database.remove('medialuna_task', { id })
+      }
+    }
+
+    return ids.length
+  }
+
   /** 清理旧任务 */
   async cleanup(beforeDate: Date): Promise<number> {
     // 先查询符合条件的任务
