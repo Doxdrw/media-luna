@@ -245,6 +245,30 @@ export function isMediaLunaError(error: unknown): error is MediaLunaError {
   return error instanceof MediaLunaError
 }
 
+/**
+ * 脱敏错误信息，移除可能包含的敏感信息（URL、API Key等）
+ */
+function sanitizeErrorMessage(message: string): string {
+  // 移除完整 URL（可能包含 API Key 和主机名）
+  let sanitized = message.replace(
+    /https?:\/\/[^\s"'<>]+/gi,
+    '[API端点]'
+  )
+
+  // 移除可能的 API Key 模式（常见格式）
+  // sk-xxx, key=xxx, apikey=xxx, api_key=xxx, token=xxx 等
+  sanitized = sanitized.replace(
+    /\b(sk-[a-zA-Z0-9]{20,}|[a-zA-Z0-9]{32,})\b/g,
+    '[REDACTED]'
+  )
+  sanitized = sanitized.replace(
+    /(api[_-]?key|apikey|key|token|secret|password|auth)[=:]\s*["']?[^\s"',]+["']?/gi,
+    '$1=[REDACTED]'
+  )
+
+  return sanitized
+}
+
 /** 将任意错误转换为 MediaLunaError */
 export function toMediaLunaError(error: unknown): MediaLunaError {
   if (isMediaLunaError(error)) {
@@ -252,15 +276,17 @@ export function toMediaLunaError(error: unknown): MediaLunaError {
   }
 
   if (error instanceof Error) {
+    // 脱敏错误信息
+    const sanitizedMessage = sanitizeErrorMessage(error.message)
     return new MediaLunaError(
       MediaLunaErrorCode.UNKNOWN,
-      error.message,
+      sanitizedMessage,
       { originalError: error.name, stack: error.stack }
     )
   }
 
   return new MediaLunaError(
     MediaLunaErrorCode.UNKNOWN,
-    String(error)
+    sanitizeErrorMessage(String(error))
   )
 }

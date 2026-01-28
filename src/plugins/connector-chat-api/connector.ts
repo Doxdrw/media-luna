@@ -116,6 +116,75 @@ function extractMediaFromContent(content: string, mode: string): OutputAsset[] {
   return assets
 }
 
+/**
+ * 从响应对象中递归提取媒体资源
+ * 支持各种 API 返回格式：images, image, data, url 等字段
+ */
+function extractMediaFromResponse(response: any, seenUrls: Set<string>): OutputAsset[] {
+  const assets: OutputAsset[] = []
+
+  if (!response || typeof response !== 'object') return assets
+
+  // 处理数组
+  if (Array.isArray(response)) {
+    for (const item of response) {
+      assets.push(...extractMediaFromResponse(item, seenUrls))
+    }
+    return assets
+  }
+
+  // 检查常见的媒体字段
+  const mediaFields = ['images', 'image', 'data', 'url', 'image_url', 'video_url', 'audio_url', 'b64_json', 'revised_prompt']
+
+  for (const field of mediaFields) {
+    const value = response[field]
+    if (!value) continue
+
+    // 字符串类型：可能是 URL 或 base64
+    if (typeof value === 'string') {
+      if (seenUrls.has(value)) continue
+
+      // 检查是否是 URL
+      if (value.startsWith('http://') || value.startsWith('https://')) {
+        seenUrls.add(value)
+        const kind = getMediaKind(value) || 'image' // 默认当作图片
+        assets.push({ kind, url: value })
+      }
+      // 检查是否是 data URL（base64 带前缀）
+      else if (value.startsWith('data:')) {
+        seenUrls.add(value)
+        const mimeMatch = value.match(/^data:([^;]+);base64,/)
+        const mime = mimeMatch?.[1] || 'image/png'
+        const kind = mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'image'
+        assets.push({ kind, url: value, mime })
+      }
+      // 纯 base64 字符串（无 data: 前缀）- 可能来自 b64_json, image, data 等字段
+      else if (/^[A-Za-z0-9+/]+={0,2}$/.test(value) && value.length > 100) {
+        const dataUrl = `data:image/png;base64,${value}`
+        if (!seenUrls.has(dataUrl)) {
+          seenUrls.add(dataUrl)
+          assets.push({ kind: 'image', url: dataUrl, mime: 'image/png' })
+        }
+      }
+    }
+    // 对象类型：递归处理（可能是 { url: "..." } 格式）
+    else if (typeof value === 'object') {
+      assets.push(...extractMediaFromResponse(value, seenUrls))
+    }
+  }
+
+  // 递归检查其他嵌套对象（如 choices, message 等）
+  const nestedFields = ['choices', 'message', 'content', 'result', 'output', 'response']
+  for (const field of nestedFields) {
+    const value = response[field]
+    if (value && typeof value === 'object') {
+      assets.push(...extractMediaFromResponse(value, seenUrls))
+    }
+  }
+
+  return assets
+}
+
 /** Chat API 生成函数 */
 async function generate(
   ctx: Context,
@@ -276,8 +345,28 @@ async function generate(
     content = choice.message?.content || ''
   }
 
-  // 根据提取模式处理回复
-  return extractMediaFromContent(content, extractMode)
+  // 用于去重
+  const seenUrls = new Set<string>()
+  const assets: OutputAsset[] = []
+
+  // 1. 先从响应对象中提取媒体（支持 images, data, url 等字段）
+  if (!stream && response) {
+    const responseAssets = extractMediaFromResponse(response, seenUrls)
+    assets.push(...responseAssets)
+  }
+
+  // 2. 再从 content 字符串中提取媒体
+  if (content) {
+    const contentAssets = extractMediaFromContent(content, extractMode)
+    // 过滤掉已存在的 URL
+    for (const asset of contentAssets) {
+      if (asset.url && seenUrls.has(asset.url)) continue
+      if (asset.url) seenUrls.add(asset.url)
+      assets.push(asset)
+    }
+  }
+
+  return assets
 }
 
 /** Chat API 连接器定义 */

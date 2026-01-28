@@ -160,9 +160,10 @@ async function generate(
         if (part.thought) thoughtParts++
         if (part.inlineData) imageParts++
 
-        // 过滤思考过程的图片（thought: true 标记的 parts）
+        // 过滤思考过程（thought: true 标记的 parts）
         // 兼容旧数据：filterThoughtImages 未设置时默认为 true
-        if ((filterThoughtImages ?? true) && part.thought) {
+        const shouldFilterThought = (filterThoughtImages ?? true) && part.thought
+        if (shouldFilterThought) {
           continue
         }
 
@@ -183,13 +184,14 @@ async function generate(
           })
         }
 
-        // 处理文本内容（非思考过程）
-        if (part.text && !part.thought) {
+        // 处理文本内容
+        if (part.text) {
           assets.push({
             kind: 'text',
             content: part.text,
             meta: {
-              model
+              model,
+              isThought: part.thought || false
             }
           })
         }
