@@ -56,6 +56,7 @@ export function createTaskRecorderPrepareMiddleware(): MiddlewareDefinition {
     description: '在生成开始时创建任务记录',
     category: 'recording',
     phase: 'lifecycle-prepare',
+    after: ['storage-input'],  // 确保在 storage-input 之后执行，以获取已上传的输入文件 URL
     // 配置在 task 插件的扩展插件面板中设置
 
     async execute(context: MiddlewareContext, next): Promise<MiddlewareRunStatus> {

@@ -135,6 +135,7 @@ export default definePlugin({
           lines.push('  preset <预设名> - 查看具体预设内容')
           lines.push('  mytasks - 查看我的生成记录')
           lines.push('  taskinfo <ID> - 查看任务详情')
+          lines.push('  redraw <ID> - 使用相同参数重新生成')
           lines.push('')
           lines.push('🖼️ 基础用法：')
           lines.push('  1. 渠道名 预设名 提示词 [图片]')
@@ -567,6 +568,148 @@ export default definePlugin({
         })
       presetCommandDisposables.push(() => taskDetailCmd.dispose())
 
+      // medialuna.redraw <id> - 重绘任务
+      const redrawCmd = ctx.command(`${PARENT_COMMAND}.redraw <id:number>`, '使用相同参数重新生成')
+        .alias('redraw')
+        .action(async ({ session }: { session?: Session }, id: number) => {
+          if (!id && id !== 0) {
+            return '请指定任务 ID'
+          }
+
+          const taskService = mediaLunaRef?.tasks
+          const channelService = mediaLunaRef?.channels
+          if (!taskService || !channelService) {
+            return '服务不可用'
+          }
+
+          // 获取任务信息
+          const taskId = Number(id)
+          if (isNaN(taskId)) {
+            return `无效的任务 ID: ${id}`
+          }
+
+          const task = await taskService.getById(taskId)
+          if (!task) {
+            return `未找到任务「${taskId}」`
+          }
+
+          // 检查权限：只能重绘自己的任务（管理员除外）
+          const uid = (session as any)?.user?.id
+          const isAdmin = (session as any)?.user?.authority >= 3
+          if (!isAdmin && task.uid !== uid) {
+            return '无权重绘此任务'
+          }
+
+          // 获取渠道信息
+          const channel = await channelService.getById(task.channelId)
+          if (!channel) {
+            return `渠道不存在 (ID: ${task.channelId})`
+          }
+
+          // 检查渠道是否启用
+          if (!channel.enabled) {
+            return `渠道「${channel.name}」已禁用`
+          }
+
+          // 提取任务参数
+          const request = task.requestSnapshot
+          const prompt = request?.prompt || ''
+          const presetName = request?.parameters?.preset
+          const inputFiles = (request as any)?.inputFiles as OutputAsset[] | undefined
+
+          // 下载参考图片
+          const files: FileData[] = []
+          let inputFileWarning: string | null = null
+          if (inputFiles && inputFiles.length > 0) {
+            // 检查输入文件状态
+            const hasHttpUrls = inputFiles.some(f => f.url?.startsWith('http'))
+            const hasBase64Removed = inputFiles.some(f => f.url === '[base64-data-removed]')
+            const hasEmptyUrls = inputFiles.some(f => !f.url || f.url === '')
+
+            if (!hasHttpUrls) {
+              // 没有可用的 HTTP URL
+              if (hasBase64Removed) {
+                inputFileWarning = `原任务有 ${inputFiles.length} 张参考图，但未启用存储中间件，无法重新下载`
+              } else if (hasEmptyUrls) {
+                inputFileWarning = `原任务有 ${inputFiles.length} 张参考图，但未保存 URL（需启用存储中间件）`
+              }
+            } else {
+              // 尝试下载有 HTTP URL 的文件
+              for (const file of inputFiles) {
+                if (file.url && file.url.startsWith('http')) {
+                  try {
+                    const response = await ctx.http.get(file.url, {
+                      responseType: 'arraybuffer',
+                      timeout: 30000
+                    })
+                    if (response && response.byteLength > 0) {
+                      const buffer = Buffer.from(response)
+                      const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+                      files.push({
+                        data: arrayBuffer,
+                        mime: file.mime || 'image/png',
+                        filename: `redraw_${files.length}.${(file.mime || 'image/png').split('/')[1] || 'png'}`
+                      })
+                    }
+                  } catch (e) {
+                    logger.warn('Failed to download image for redraw: %s', e)
+                  }
+                }
+              }
+              // 检查是否全部下载失败
+              if (files.length === 0) {
+                inputFileWarning = `原任务有 ${inputFiles.length} 张参考图，但下载失败（URL 可能已过期）`
+              } else if (files.length < inputFiles.filter(f => f.url?.startsWith('http')).length) {
+                inputFileWarning = `部分参考图下载失败 (${files.length}/${inputFiles.length})`
+              }
+            }
+          }
+
+          // 发送提示
+          const infoParts = [`重绘任务「${taskId}」`]
+          infoParts.push(`渠道: ${channel.name}`)
+          if (presetName) infoParts.push(`预设: ${presetName}`)
+          infoParts.push(`提示词: ${prompt.length > 30 ? prompt.slice(0, 30) + '...' : prompt}`)
+          if (files.length > 0) {
+            infoParts.push(`参考图: ${files.length} 张`)
+          } else if (inputFileWarning) {
+            infoParts.push(`⚠️ ${inputFileWarning}`)
+          }
+
+          const hintMsgIds = await session?.send(infoParts.join(' | ') + '\n正在生成中...')
+
+          try {
+            // 执行生成
+            const result = await mediaLunaRef.generate({
+              channel: channel.id,
+              prompt,
+              files,
+              parameters: { preset: presetName },
+              session,
+              uid
+            })
+
+            // 删除提示消息
+            if (session && hintMsgIds) {
+              await deleteMessages(session, hintMsgIds)
+            }
+
+            // 检查链接模式
+            const channelTags: string[] = channel.tags || []
+            const linkModeTag = checkLinkMode(config, channelTags)
+
+            return formatResult(result, linkModeTag, config, null, channel.name)
+          } catch (error) {
+            // 删除提示消息
+            if (session && hintMsgIds) {
+              await deleteMessages(session, hintMsgIds)
+            }
+            logger.error('Redraw failed: %s', error)
+            return `重绘失败: ${error instanceof Error ? error.message : '未知错误'}`
+          }
+        })
+      presetCommandDisposables.push(() => redrawCmd.dispose())
+
       logger.info('Preset query commands registered')
     }
 
@@ -661,7 +804,7 @@ function registerChannelCommand(
   // 设置用法说明和动作处理器
   channelCmd
     .usage(`用法: ${commandName} [预设名] <提示词>\n可用预设: ${presets.map((p: any) => p.name).join(', ') || '无'}`)
-    .action(async ({ session, options }: { session: Session; options: any }, ...rest: string[]) => {
+    .action(async ({ session, options }: { session: Session; options: any }) => {
       // 初始化收集状态（预设名稍后解析）
       const state: CollectState = {
         files: [],
@@ -670,17 +813,14 @@ function registerChannelCommand(
         presetName: undefined
       }
 
-      // 创建提取器
-      const extractor = new MessageExtractor(ctx, logger, state, config)
+      // 创建提取器，传入命令名前缀列表
+      const extractor = new MessageExtractor(ctx, logger, state, config, [commandName, channel.name])
 
-      // 从当前消息提取媒体内容（图片、at、引用），不提取文本
-      // 文本由 Koishi 解析器通过 rest 参数提供，已正确去除命令名
+      // 从当前消息提取媒体内容（图片、at、引用）
       await extractor.extractMedia(session)
 
-      // 使用 Koishi 解析器提供的 rest 参数作为提示词
-      // rest 参数已经正确去除了命令名（无论是 medialuna.渠道名 还是 渠道名）
-      // 这避免了手动解析时可能出现的问题
-      const promptText = rest.join(' ').trim()
+      // 提取文本，自动去除命令名前缀
+      const promptText = extractor.extractTextWithoutCommand(session?.elements || [])
       if (promptText) {
         state.prompts.push(promptText)
       }
@@ -740,13 +880,22 @@ class MessageExtractor {
   private state: CollectState
   private config: KoishiCommandsConfig
   private result: ExtractResult
+  private commandPrefixes: string[]  // 需要去除的命令名前缀列表
 
-  constructor(ctx: any, logger: any, state: CollectState, config: KoishiCommandsConfig) {
+  constructor(
+    ctx: any,
+    logger: any,
+    state: CollectState,
+    config: KoishiCommandsConfig,
+    commandPrefixes: string[] = []
+  ) {
     this.ctx = ctx
     this.logger = logger
     this.state = state
     this.config = config
     this.result = { images: 0, avatars: 0, failed: 0, skipped: 0, failedUrls: [] }
+    // 按长度降序排列，确保优先匹配更长的命令名
+    this.commandPrefixes = [...commandPrefixes].sort((a, b) => b.length - a.length)
   }
 
   /**
@@ -979,6 +1128,28 @@ class MessageExtractor {
   extractText(elements: any[]): string {
     const textElements = h.select(elements, 'text')
     return textElements.map(el => el.attrs?.content || '').join('').trim()
+  }
+
+  /**
+   * 从元素数组中提取文本，并去除命令名前缀
+   * 使用构造时传入的 commandPrefixes
+   */
+  extractTextWithoutCommand(elements: any[]): string {
+    let text = this.extractText(elements)
+    if (!text || this.commandPrefixes.length === 0) return text
+
+    const textLower = text.toLowerCase()
+
+    for (const cmdName of this.commandPrefixes) {
+      const cmdLower = cmdName.toLowerCase()
+      if (textLower.startsWith(cmdLower)) {
+        // 去除命令名和后面的空格
+        text = text.substring(cmdName.length).trimStart()
+        break
+      }
+    }
+
+    return text
   }
 
   /**
@@ -1414,7 +1585,30 @@ async function executeGenerate(
     // 检查是否需要使用链接模式（返回匹配的标签名或 null）
     const linkModeTag = checkLinkMode(config, channelTags)
 
-    return formatResult(result, linkModeTag, config)
+    // 查询上次成功生成时间（无论本次成功失败都显示）
+    let lastSuccessTime: Date | null = null
+    if (config.showLastSuccessTime) {
+      try {
+        const channel = await mediaLuna.channels.getByName(options.channelName)
+        if (channel) {
+          const tasks = await mediaLuna.tasks.query({
+            channelId: channel.id,
+            status: 'success',
+            limit: result.success ? 2 : 1  // 成功时取2条跳过当前，失败时取1条
+          })
+          // 成功时跳过当前任务（第一条），取上一条的时间
+          // 失败时直接取第一条（最近一次成功）
+          const targetTask = result.success ? tasks[1] : tasks[0]
+          if (targetTask) {
+            lastSuccessTime = targetTask.endTime || targetTask.startTime
+          }
+        }
+      } catch (e) {
+        logger.debug('Failed to get last success time: %s', e)
+      }
+    }
+
+    return formatResult(result, linkModeTag, config, lastSuccessTime, options.channelName)
   } catch (error) {
     // 撤销"正在生成中"消息
     if (session && generatingMsgIds) {
@@ -1458,8 +1652,19 @@ function checkLinkMode(config: KoishiCommandsConfig, channelTags: string[]): str
  * - 纯音频：只发送音频元素，不带任务ID和计费信息
  * - 链接模式：使用合并转发消息，输出链接而不是直接发图
  */
-function formatResult(result: GenerationResult, linkModeTag: string | null = null, config?: KoishiCommandsConfig): string {
+function formatResult(
+  result: GenerationResult,
+  linkModeTag: string | null = null,
+  config?: KoishiCommandsConfig,
+  lastSuccessTime?: Date | null,
+  channelName?: string
+): string {
   const outputTextContent = config?.outputTextContent ?? false
+
+  // 格式化上次成功时间信息（包含渠道名和中国时间）
+  const lastSuccessInfo = lastSuccessTime && channelName
+    ? `「${channelName}」上次成功: ${formatChinaTime(lastSuccessTime)}`
+    : null
   // 失败情况：始终显示任务ID和错误信息
   if (!result.success) {
     const messages: string[] = []
@@ -1467,7 +1672,7 @@ function formatResult(result: GenerationResult, linkModeTag: string | null = nul
       messages.push(`「${result.taskId}」`)
     }
     messages.push(`生成失败: ${result.error || '未知错误'}`)
-    appendFooterInfo(messages, result)
+    appendFooterInfo(messages, result, lastSuccessInfo)
     return messages.join('\n')
   }
 
@@ -1478,7 +1683,7 @@ function formatResult(result: GenerationResult, linkModeTag: string | null = nul
       messages.push(`「${result.taskId}」`)
     }
     messages.push(`生成完成，但没有输出`)
-    appendFooterInfo(messages, result)
+    appendFooterInfo(messages, result, lastSuccessInfo)
     return messages.join('\n')
   }
 
@@ -1501,22 +1706,27 @@ function formatResult(result: GenerationResult, linkModeTag: string | null = nul
 
   // 包含视频：使用合并转发消息
   if (hasVideo) {
-    return formatVideoResult(result, linkModeTag, outputTextContent)
+    return formatVideoResult(result, linkModeTag, outputTextContent, lastSuccessInfo)
   }
 
   // 链接模式：使用合并转发消息，每个链接单独一条方便复制
   if (linkModeTag) {
-    return formatLinkModeResult(result, linkModeTag, outputTextContent)
+    return formatLinkModeResult(result, linkModeTag, outputTextContent, lastSuccessInfo)
   }
 
   // 常规输出：图片/文本，带任务ID和计费信息
-  return formatStandardResult(result, outputTextContent)
+  return formatStandardResult(result, outputTextContent, lastSuccessInfo)
 }
 
 /**
  * 格式化视频输出（使用合并转发消息）
  */
-function formatVideoResult(result: GenerationResult, linkModeTag: string | null = null, outputTextContent: boolean = false): string {
+function formatVideoResult(
+  result: GenerationResult,
+  linkModeTag: string | null = null,
+  outputTextContent: boolean = false,
+  lastSuccessInfo: string | null = null
+): string {
   const forwardMessages: string[] = []
 
   // 第一条消息：任务信息
@@ -1532,6 +1742,11 @@ function formatVideoResult(result: GenerationResult, linkModeTag: string | null 
   }
   if (infoLines.length > 0) {
     forwardMessages.push(`<message>${infoLines.join(' | ')}</message>`)
+  }
+
+  // 上次成功时间（单独一条消息）
+  if (lastSuccessInfo) {
+    forwardMessages.push(`<message>${lastSuccessInfo}</message>`)
   }
 
   // 链接模式说明
@@ -1566,7 +1781,12 @@ function formatVideoResult(result: GenerationResult, linkModeTag: string | null 
 /**
  * 格式化链接模式输出（使用合并转发消息，每个链接单独一条方便复制）
  */
-function formatLinkModeResult(result: GenerationResult, linkModeTag: string, outputTextContent: boolean = false): string {
+function formatLinkModeResult(
+  result: GenerationResult,
+  linkModeTag: string,
+  outputTextContent: boolean = false,
+  lastSuccessInfo: string | null = null
+): string {
   const forwardMessages: string[] = []
 
   // 第一条消息：任务信息
@@ -1582,6 +1802,11 @@ function formatLinkModeResult(result: GenerationResult, linkModeTag: string, out
   }
   if (infoLines.length > 0) {
     forwardMessages.push(`<message>${infoLines.join(' | ')}</message>`)
+  }
+
+  // 上次成功时间（单独一条消息）
+  if (lastSuccessInfo) {
+    forwardMessages.push(`<message>${lastSuccessInfo}</message>`)
   }
 
   // 链接模式说明
@@ -1606,7 +1831,11 @@ function formatLinkModeResult(result: GenerationResult, linkModeTag: string, out
 /**
  * 格式化标准输出（图片/文本）
  */
-function formatStandardResult(result: GenerationResult, outputTextContent: boolean = false): string {
+function formatStandardResult(
+  result: GenerationResult,
+  outputTextContent: boolean = false,
+  lastSuccessInfo: string | null = null
+): string {
   const messages: string[] = []
 
   // 任务 ID 放在最开始
@@ -1628,7 +1857,7 @@ function formatStandardResult(result: GenerationResult, outputTextContent: boole
   }
 
   // 底部信息
-  appendFooterInfo(messages, result)
+  appendFooterInfo(messages, result, lastSuccessInfo)
 
   return messages.join('\n')
 }
@@ -1636,7 +1865,11 @@ function formatStandardResult(result: GenerationResult, outputTextContent: boole
 /**
  * 添加底部信息（耗时、计费等）
  */
-function appendFooterInfo(messages: string[], result: GenerationResult): void {
+function appendFooterInfo(
+  messages: string[],
+  result: GenerationResult,
+  lastSuccessInfo: string | null = null
+): void {
   const footerParts: string[] = []
 
   // 耗时
@@ -1652,6 +1885,11 @@ function appendFooterInfo(messages: string[], result: GenerationResult): void {
   if (footerParts.length > 0) {
     messages.push(footerParts.join(' | '))
   }
+
+  // 上次成功时间（单独一行）
+  if (lastSuccessInfo) {
+    messages.push(lastSuccessInfo)
+  }
 }
 
 /**
@@ -1664,6 +1902,23 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(seconds / 60)
   const remainingSeconds = (seconds % 60).toFixed(0)
   return `${minutes}m ${remainingSeconds}s`
+}
+
+/**
+ * 格式化为中国时间（UTC+8）
+ */
+function formatChinaTime(date: Date): string {
+  // 使用 toLocaleString 格式化为中国时间
+  return date.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  })
 }
 
 // 导出类型

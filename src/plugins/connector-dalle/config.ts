@@ -28,6 +28,17 @@ export const connectorFields: ConnectorField[] = [
     description: '模型名称，如 dall-e-3、dall-e-2 或其他兼容模型'
   },
   {
+    key: 'apiMode',
+    label: '接口模式',
+    type: 'select',
+    default: 'generations',
+    options: [
+      { label: 'generations (文生图/JSON)', value: 'generations' },
+      { label: 'edits (图生图/FormData)', value: 'edits' }
+    ],
+    description: 'generations 使用 JSON 格式，edits 使用 multipart/form-data 上传图片'
+  },
+  {
     key: 'size',
     label: '图片尺寸',
     type: 'text',

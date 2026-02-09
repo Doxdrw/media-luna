@@ -20,6 +20,8 @@ export interface KoishiCommandsConfig {
   outputTextContent: boolean
   /** 是否使用 NapCat/OneBot 的 get_file API 获取视频链接（修复 QQ 视频本地路径问题） */
   useNapCatFileApi: boolean
+  /** 是否显示该渠道上次成功生成的时间 */
+  showLastSuccessTime: boolean
 }
 
 /** 默认配置 */
@@ -31,7 +33,8 @@ export const defaultKoishiCommandsConfig: KoishiCommandsConfig = {
   linkModeEnabled: false,
   linkModeTags: 'nsfw',
   outputTextContent: false,
-  useNapCatFileApi: false
+  useNapCatFileApi: false,
+  showLastSuccessTime: false
 }
 
 /** 配置字段定义 */
@@ -91,5 +94,12 @@ export const koishiCommandsConfigFields: ConfigField[] = [
     type: 'boolean',
     default: false,
     description: '针对 QQ 平台（NapCat/OneBot）：尝试调用 internal.get_file 获取视频真实链接。仅在视频无法正常获取时开启。'
+  },
+  {
+    key: 'showLastSuccessTime',
+    label: '显示上次成功时间',
+    type: 'boolean',
+    default: false,
+    description: '每次生成输出时显示该渠道上次成功生成的时间（中国时间）'
   }
 ]

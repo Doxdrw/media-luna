@@ -15,6 +15,7 @@ async function generate(
     apiUrl,
     apiKey,
     model,
+    apiMode = 'generations',
     size,
     quality,
     style,
@@ -27,6 +28,58 @@ async function generate(
     throw new Error('模型名称未配置')
   }
 
+  const imageFiles = enableImageInput
+    ? files.filter(f => f.mime.startsWith('image/'))
+    : []
+
+  // 根据模式选择请求方式
+  if (apiMode === 'edits' && imageFiles.length > 0) {
+    // edits 模式：使用 multipart/form-data
+    return generateWithEdits(ctx, {
+      apiUrl,
+      apiKey,
+      model,
+      size,
+      quality,
+      style,
+      n,
+      timeout
+    }, imageFiles[0], prompt)
+  } else {
+    // generations 模式：使用 JSON
+    return generateWithGenerations(ctx, {
+      apiUrl,
+      apiKey,
+      model,
+      size,
+      quality,
+      style,
+      n,
+      enableImageInput,
+      timeout
+    }, imageFiles, prompt)
+  }
+}
+
+/** generations 模式：JSON 格式请求 */
+async function generateWithGenerations(
+  ctx: Context,
+  config: Record<string, any>,
+  imageFiles: FileData[],
+  prompt: string
+): Promise<OutputAsset[]> {
+  const {
+    apiUrl,
+    apiKey,
+    model,
+    size,
+    quality,
+    style,
+    n,
+    enableImageInput,
+    timeout
+  } = config
+
   const requestBody: Record<string, any> = {
     model,
     prompt
@@ -38,18 +91,14 @@ async function generate(
   if (quality) requestBody.quality = quality
   if (style) requestBody.style = style
 
-  // 处理图片输入（如果启用且有图片）
-  if (enableImageInput && files.length > 0) {
-    const imageFiles = files.filter(f => f.mime.startsWith('image/'))
-    if (imageFiles.length > 0) {
-      // 将图片转为 base64 数组
-      const imageArray: string[] = imageFiles.map(imageFile => {
-        const base64 = Buffer.from(imageFile.data).toString('base64')
-        return `data:${imageFile.mime};base64,${base64}`
-      })
-      requestBody.image = imageArray
-      ctx.logger('media-luna').debug(`DALL-E: Added ${imageArray.length} reference image(s)`)
-    }
+  // 处理图片输入（JSON 模式下作为 base64 数组）
+  if (enableImageInput && imageFiles.length > 0) {
+    const imageArray: string[] = imageFiles.map(imageFile => {
+      const base64 = Buffer.from(imageFile.data).toString('base64')
+      return `data:${imageFile.mime};base64,${base64}`
+    })
+    requestBody.image = imageArray
+    ctx.logger('media-luna').debug(`DALL-E generations: Added ${imageArray.length} reference image(s)`)
   }
 
   const response = await ctx.http.post(apiUrl, requestBody, {
@@ -60,6 +109,58 @@ async function generate(
     timeout: timeout * 1000
   })
 
+  return parseResponse(response)
+}
+
+/** edits 模式：multipart/form-data 格式请求 */
+async function generateWithEdits(
+  ctx: Context,
+  config: Record<string, any>,
+  imageFile: FileData,
+  prompt: string
+): Promise<OutputAsset[]> {
+  const {
+    apiUrl,
+    apiKey,
+    model,
+    size,
+    quality,
+    style,
+    n,
+    timeout
+  } = config
+
+  // 构建 FormData
+  const formData = new FormData()
+  formData.append('model', model)
+  formData.append('prompt', prompt)
+
+  // 添加图片文件
+  const imageBlob = new Blob([imageFile.data], { type: imageFile.mime })
+  const ext = imageFile.mime.split('/')[1] || 'png'
+  formData.append('image', imageBlob, `image.${ext}`)
+
+  // 可选参数
+  if (n !== undefined && n !== null) formData.append('n', String(n))
+  if (size) formData.append('size', size)
+  if (quality) formData.append('quality', quality)
+  if (style) formData.append('style', style)
+
+  ctx.logger('media-luna').debug(`DALL-E edits: Uploading image (${imageFile.data.byteLength} bytes)`)
+
+  const response = await ctx.http.post(apiUrl, formData, {
+    headers: {
+      'Authorization': `Bearer ${apiKey}`
+      // Content-Type 由 FormData 自动设置
+    },
+    timeout: timeout * 1000
+  })
+
+  return parseResponse(response)
+}
+
+/** 解析响应 */
+function parseResponse(response: any): OutputAsset[] {
   if (!response.data || !Array.isArray(response.data)) {
     throw new Error('Invalid response from DALL-E API')
   }
@@ -69,7 +170,6 @@ async function generate(
     if (item.url) {
       url = item.url
     } else if (item.b64_json) {
-      // b64_json 是原始 base64 字符串，需要加上 data URL 前缀
       url = `data:image/png;base64,${item.b64_json}`
     } else {
       throw new Error('No image data in response')
@@ -103,6 +203,7 @@ export const DalleConnector: ConnectorDefinition = {
     const {
       apiUrl,
       model,
+      apiMode = 'generations',
       size,
       quality,
       style,
@@ -117,6 +218,7 @@ export const DalleConnector: ConnectorDefinition = {
 
     // 只记录实际配置的参数
     const parameters: Record<string, any> = {}
+    parameters.apiMode = apiMode
     if (size) parameters.size = size
     if (quality) parameters.quality = quality
     if (style) parameters.style = style
