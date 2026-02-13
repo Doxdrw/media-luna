@@ -129,63 +129,151 @@ function modifyWorkflowToAvoidCache(workflow: any, avoidCache: boolean): any {
 /**
  * 等待执行完成并获取结果
  */
-function waitForCompletion(
-  ctx: Context,
-  serverEndpoint: string,
+/**
+ * 建立 WebSocket 连接
+ */
+function connectWebSocket(
   isSecure: boolean,
-  clientId: string,
-  promptId: string,
-  timeoutMs: number
-): Promise<any> {
+  serverEndpoint: string,
+  clientId: string
+): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const wsUrl = `${getWsProtocol(isSecure)}://${serverEndpoint}/ws?clientId=${clientId}`
     const ws = new WebSocket(wsUrl, { perMessageDeflate: false })
 
+    // 设置 10s 连接超时
     const timer = setTimeout(() => {
+      cleanup()
       ws.close()
-      reject(new Error('ComfyUI execution timeout'))
+      reject(new Error('WebSocket connection timeout'))
+    }, 10000)
+
+    const onOpen = () => {
+      cleanup()
+      resolve(ws)
+    }
+
+    const onError = (err: Error) => {
+      cleanup()
+      reject(err)
+    }
+
+    ws.on('open', onOpen)
+    ws.on('error', onError)
+
+    function cleanup() {
+      ws.off('open', onOpen)
+      ws.off('error', onError)
+      clearTimeout(timer)
+    }
+  })
+}
+
+/**
+ * 监听任务完成
+ */
+/**
+ * 监听任务完成
+ */
+function setupCompletionListener(
+  ctx: Context,
+  serverEndpoint: string,
+  isSecure: boolean,
+  ws: WebSocket,
+  timeoutMs: number
+) {
+  const logger = ctx.logger('media-luna')
+  let targetPromptId: string | undefined
+  let resolved = false
+
+  const completionPromise = new Promise<void>((resolve, reject) => {
+    // 1. 超时定时器
+    const timeoutTimer = setTimeout(() => {
+      cleanup()
+      if (!resolved) reject(new Error('ComfyUI execution timeout'))
     }, timeoutMs)
 
-    ws.on('error', (err) => {
-      clearTimeout(timer)
-      reject(err)
-    })
+    // 2. 轮询定时器 (每 1s 检查一次历史记录)
+    // 这是为了防止 WebSocket 事件丢失导致死锁
+    const pollingTimer = setInterval(async () => {
+      if (!targetPromptId || resolved) return
 
-    ws.on('message', async (data, isBinary) => {
+      try {
+        const history = await getHistory(ctx, serverEndpoint, isSecure, targetPromptId)
+        if (history) {
+          logger.info('[comfyui] Task %s completed (detected via polling)', targetPromptId)
+          resolved = true
+          cleanup()
+          resolve()
+        }
+      } catch (e) {
+        // ignore polling errors
+      }
+    }, 1000)
+
+    const onMessage = (data: any, isBinary: boolean) => {
       if (isBinary) return
 
       try {
         const message = JSON.parse(data.toString())
 
-        // 检查执行完成：executing + node === null
+        // Debug log for relevant messages
+        if (message.type === 'executing' || message.type === 'execution_error') {
+          logger.debug('[comfyui] WS Message: %o', message)
+        }
+
+        // 检查执行完成
         if (
           message.type === 'executing' &&
-          message.data.prompt_id === promptId &&
-          message.data.node === null
+          message.data.node === null &&
+          message.data.prompt_id === targetPromptId
         ) {
-          clearTimeout(timer)
-          ws.close()
-
-          // 获取历史记录和结果
-          try {
-            const history = await getHistory(ctx, serverEndpoint, isSecure, promptId)
-            resolve(history)
-          } catch (e) {
-            reject(new Error('Failed to get execution history'))
-          }
+          logger.info('[comfyui] Task %s completed (detected via WebSocket)', targetPromptId)
+          resolved = true
+          cleanup()
+          resolve()
         }
 
         // 执行错误
-        if (message.type === 'execution_error' && message.data.prompt_id === promptId) {
-          clearTimeout(timer)
-          ws.close()
+        if (
+          message.type === 'execution_error' &&
+          message.data.prompt_id === targetPromptId
+        ) {
+          resolved = true
+          cleanup()
           reject(new Error(`ComfyUI Error: ${JSON.stringify(message.data)}`))
         }
       } catch (e) {
-        // ignore parse error
+        // ignore
       }
-    })
+    }
+
+    const onClose = () => {
+      if (!resolved) {
+        // WebSocket 断开不一定是错误，如果轮询能查到结果也算成功
+        // 但这里我们简单处理，如果没有 targetPromptId 或者还没有完成，就报错
+        // 实际生产中可能由于网络波动 ws 断开，但任务还在跑。
+        // 由于我们有轮询，这里可以不立即 reject，而是等待超时。
+        // 但为了保持逻辑简单，且 WS 断开通常意味着连接出了问题，我们记录日志。
+        logger.warn('[comfyui] WebSocket connection closed unexpectedly')
+      }
+    }
+
+    ws.on('message', onMessage)
+    ws.on('close', onClose)
+
+    function cleanup() {
+      ws.off('message', onMessage)
+      ws.off('close', onClose)
+      clearTimeout(timeoutTimer)
+      clearInterval(pollingTimer)
+    }
   })
+
+  return {
+    setPromptId: (id: string) => { targetPromptId = id },
+    completionPromise
+  }
 }
 
 /** ComfyUI 生成函数 */
@@ -348,125 +436,132 @@ async function generate(
     }
   }
 
-  // 4. 生成客户端 ID 并提交任务
+  // 4. 生成客户端 ID
   const clientId = Math.random().toString(36).substring(2, 15)
 
-  logger.info('[comfyui] Step 3: Queueing workflow...')
-  const queueResponse = await ctx.http.post(
-    `${getHttpProtocol(isSecure)}://${serverEndpoint}/prompt`,
-    {
-      prompt: workflowJson,
-      client_id: clientId
-    },
-    {
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
+  let ws: WebSocket | undefined
+  try {
+    // 关键修复：先建立 WebSocket 连接，再提交任务
+    // 这样可以确保不会漏掉执行开始和完成的事件，同时让服务器正确关联 Client ID
+    ws = await connectWebSocket(isSecure, serverEndpoint, clientId)
+
+    // 设置监听器
+    // 设置监听器
+    const { setPromptId, completionPromise } = setupCompletionListener(ctx, serverEndpoint, isSecure, ws, timeout * 1000)
+
+    logger.info('[comfyui] Step 3: Queueing workflow...')
+    const queueResponse = await ctx.http.post(
+      `${getHttpProtocol(isSecure)}://${serverEndpoint}/prompt`,
+      {
+        prompt: workflowJson,
+        client_id: clientId
+      },
+      {
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
       }
+    )
+
+    const promptId = queueResponse.prompt_id
+    if (!promptId) {
+      throw new Error('提交工作流失败：未返回 prompt_id')
     }
-  )
 
-  const promptId = queueResponse.prompt_id
-  if (!promptId) {
-    throw new Error('提交工作流失败：未返回 prompt_id')
-  }
+    // 更新监听的目标 ID
+    setPromptId(promptId)
+    logger.info('[comfyui] Step 4: Workflow queued: %s', promptId)
 
-  logger.info('[comfyui] Step 4: Workflow queued: %s', promptId)
+    // 5. 等待执行完成
+    await completionPromise
 
-  // 5. 等待执行完成
-  const history = await waitForCompletion(
-    ctx,
-    serverEndpoint,
-    isSecure,
-    clientId,
-    promptId,
-    timeout * 1000
-  )
+    // 6. 从历史记录中获取输出图片
+    const history = await getHistory(ctx, serverEndpoint, isSecure, promptId)
+    const assets: OutputAsset[] = []
 
-  // 6. 从历史记录中获取输出图片
-  const assets: OutputAsset[] = []
+    if (history?.outputs) {
+      for (const nodeId of Object.keys(history.outputs)) {
+        const nodeOutput = history.outputs[nodeId]
 
-  if (history?.outputs) {
-    for (const nodeId of Object.keys(history.outputs)) {
-      const nodeOutput = history.outputs[nodeId]
+        // 辅助函数：处理输出文件
+        const processOutputFiles = async (outputFiles: any[], kind: 'image' | 'video') => {
+          if (!Array.isArray(outputFiles)) return
 
-      // 辅助函数：处理输出文件
-      const processOutputFiles = async (outputFiles: any[], kind: 'image' | 'video') => {
-        if (!Array.isArray(outputFiles)) return
+          for (const fileInfo of outputFiles) {
+            // 只获取 output 类型的文件
+            if (fileInfo.type === 'output' || !fileInfo.type) {
+              try {
+                const fileBuffer = await getImage(
+                  ctx,
+                  serverEndpoint,
+                  isSecure,
+                  fileInfo.filename,
+                  fileInfo.subfolder || '',
+                  fileInfo.type || 'output'
+                )
 
-        for (const fileInfo of outputFiles) {
-          // 只获取 output 类型的文件
-          if (fileInfo.type === 'output' || !fileInfo.type) {
-            try {
-              const fileBuffer = await getImage(
-                ctx,
-                serverEndpoint,
-                isSecure,
-                fileInfo.filename,
-                fileInfo.subfolder || '',
-                fileInfo.type || 'output'
-              )
-
-              // 简单的 MIME 推断
-              let mime = ''
-              const ext = fileInfo.filename.toLowerCase().split('.').pop()
-              if (kind === 'image') {
-                mime = ext === 'png' ? 'image/png' : 'image/jpeg'
-              } else {
-                if (ext === 'mp4') mime = 'video/mp4'
-                else if (ext === 'webm') mime = 'video/webm'
-                else if (ext === 'gif') mime = 'image/gif' // GIF 可以视为图片或视频，这里视作 image/gif
-                else mime = 'application/octet-stream'
-              }
-
-              // 如果是 GIF，ComfyUI 可能放在 images 或 gifs 里。
-              // 如果放在 gifs 里，这里 kind 传入的是 video (为了逻辑复用)，
-              // 但 mime 是 image/gif。AssetKind 'image' 更合适 GIF。
-              // 不过 AssetKind 'video' 也能兼容。
-              // 这里修正一下 AssetKind
-              const assetKind = (ext === 'gif') ? 'image' : kind
-
-              const base64 = fileBuffer.toString('base64')
-
-              assets.push({
-                kind: assetKind,
-                url: `data:${mime};base64,${base64}`,
-                mime,
-                meta: {
-                  promptId,
-                  filename: fileInfo.filename,
-                  nodeId
+                // 简单的 MIME 推断
+                let mime = ''
+                const ext = fileInfo.filename.toLowerCase().split('.').pop()
+                if (kind === 'image') {
+                  mime = ext === 'png' ? 'image/png' : 'image/jpeg'
+                } else {
+                  if (ext === 'mp4') mime = 'video/mp4'
+                  else if (ext === 'webm') mime = 'video/webm'
+                  else if (ext === 'gif') mime = 'image/gif' // GIF 可以视为图片或视频
+                  else mime = 'application/octet-stream'
                 }
-              })
-            } catch (e) {
-              logger.warn('[comfyui] Failed to get output %s: %s', fileInfo.filename, e)
+
+                // 修正 AssetKind
+                const assetKind = (ext === 'gif') ? 'image' : kind
+                const base64 = fileBuffer.toString('base64')
+
+                assets.push({
+                  kind: assetKind,
+                  url: `data:${mime};base64,${base64}`,
+                  mime,
+                  meta: {
+                    promptId,
+                    filename: fileInfo.filename,
+                    nodeId
+                  }
+                })
+              } catch (e) {
+                logger.warn('[comfyui] Failed to get output %s: %s', fileInfo.filename, e)
+              }
             }
           }
         }
-      }
 
-      // 处理图片输出
-      if (nodeOutput.images) {
-        await processOutputFiles(nodeOutput.images, 'image')
-      }
+        // 处理图片输出
+        if (nodeOutput.images) {
+          await processOutputFiles(nodeOutput.images, 'image')
+        }
 
-      // 处理视频输出 (VideoHelperSuite 等节点通常使用 videos 或 gifs)
-      if (nodeOutput.videos) {
-        await processOutputFiles(nodeOutput.videos, 'video')
-      }
+        // 处理视频输出
+        if (nodeOutput.videos) {
+          await processOutputFiles(nodeOutput.videos, 'video')
+        }
 
-      // 处理 GIF 输出
-      if (nodeOutput.gifs) {
-        await processOutputFiles(nodeOutput.gifs, 'video') // 暂且归类为 video 处理逻辑，内部会修正为 image/gif
+        // 处理 GIF 输出
+        if (nodeOutput.gifs) {
+          await processOutputFiles(nodeOutput.gifs, 'video')
+        }
       }
     }
-  }
 
-  if (assets.length === 0) {
-    throw new Error('ComfyUI 执行完成但未返回图片')
-  }
+    if (assets.length === 0) {
+      throw new Error('ComfyUI 执行完成但未返回图片')
+    }
 
-  return assets
+    return assets
+
+  } finally {
+    if (ws) {
+      ws.close()
+    }
+  }
 }
 
 /** ComfyUI 连接器定义 */
