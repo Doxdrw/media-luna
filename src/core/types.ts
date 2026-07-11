@@ -436,6 +436,13 @@ export interface PluginDefinition {
   // 生命周期
   onLoad?: (ctx: PluginContext) => void | Promise<void>
   onUnload?: () => void | Promise<void>
+
+  /** 内部元数据：是否来自 media-luna 外部模块加载器 */
+  _external?: boolean
+  /** 内部元数据：是否来自标准 Koishi 插件桥接注册 */
+  _koishiExtension?: boolean
+  /** 内部元数据：来源模块名 */
+  _moduleName?: string
 }
 
 /** 插件信息（API 返回） */
@@ -444,6 +451,7 @@ export interface PluginInfo {
   name: string
   description?: string
   version?: string
+  source?: 'builtin' | 'external' | 'koishi-extension'
   enabled: boolean
   configFields: ConfigField[]
   config: Record<string, any>
@@ -461,6 +469,17 @@ export interface PluginInfo {
   }
   /** 预设数据源（用于 table 类型字段的内置预设） */
   presets?: Record<string, Record<string, any>[]>
+}
+
+/** Koishi 外挂扩展注册选项 */
+export interface MediaLunaExtensionRegistration {
+  /**
+   * 扩展定义，沿用 media-luna 原生 PluginDefinition
+   * 这样可以复用现有配置、服务、中间件、连接器注册逻辑
+   */
+  definition: PluginDefinition
+  /** 来源模块名或标识，用于调试和 UI 展示 */
+  moduleName?: string
 }
 
 // ============ 前端扩展 ============

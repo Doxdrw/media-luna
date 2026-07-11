@@ -52,6 +52,11 @@ function extractChatLunaMessageId(message: any): string | undefined {
   return undefined
 }
 
+function isInjectedTaskBindingMessage(message: any): boolean {
+  const content = message?.content
+  return typeof content === 'string' && content.includes('<medialuna_task_binding ')
+}
+
 function formatInjectedBindingMessage(payload: InjectedTaskBindingPayload): string {
   const suffix = payload.fallbackReason === 'anchor-not-found'
     ? '注意：未在当前上下文中找到对应 messageId，已回退为追加注入，用于确认注入能力正常。'
@@ -169,6 +174,13 @@ export default definePlugin({
             logger.debug('[ChatLunaBinding] no renderable bindings for conversation=%s', conversationId)
             await next()
             return
+          }
+
+          const originalLength = Array.isArray(runtime.result) ? runtime.result.length : 0
+          runtime.result = (runtime.result as any[]).filter((message) => !isInjectedTaskBindingMessage(message))
+          const removedInjectedCount = originalLength - runtime.result.length
+          if (removedInjectedCount > 0) {
+            logger.debug('[ChatLunaBinding] removed %s stale injected binding messages for conversation=%s', removedInjectedCount, conversationId)
           }
 
           const runtimeMessageIds = (runtime.result as any[])

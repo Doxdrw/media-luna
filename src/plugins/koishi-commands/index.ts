@@ -10,6 +10,7 @@ import {
 import { registerTaskCommands } from './commands/tasks'
 import { registerChannelCommand } from './commands/channel-generate'
 import { registerCatalogCommands } from './commands/catalog'
+import { registerCharacterProfileCommands } from './commands/character-profiles'
 
 type CapabilityKey = 'img2img' | 'img2video' | 'text2img' | 'text2video' | 'text2audio'
 
@@ -148,6 +149,14 @@ export default definePlugin({
         config,
         logger,
         parentCommand: PARENT_COMMAND
+      }))
+
+      presetCommandDisposables.push(...registerCharacterProfileCommands({
+        ctx,
+        logger,
+        config,
+        parentCommand: PARENT_COMMAND,
+        mediaLuna: mediaLunaRef
       }))
 
       logger.info('Catalog and task commands registered')

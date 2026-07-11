@@ -364,15 +364,16 @@ export class PluginLoader {
         enabled: this._middlewareRegistry.has(mw.name) && plugin.enabled
       }))
 
-      result.push({
-        id,
-        name: def.name,
-        description: def.description,
-        version: def.version,
-        enabled: plugin.enabled,
-        configFields: def.configFields || [],
-        config,
-        actions: def.settingsActions || [],
+       result.push({
+         id,
+         name: def.name,
+         description: def.description,
+         version: def.version,
+         source: def._external ? 'external' : def._koishiExtension ? 'koishi-extension' : 'builtin',
+         enabled: plugin.enabled,
+         configFields: def.configFields || [],
+         config,
+         actions: def.settingsActions || [],
         middlewares,
         connector: def.connector ? {
           id: def.connector.id,

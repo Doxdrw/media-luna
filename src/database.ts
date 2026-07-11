@@ -49,6 +49,30 @@ export function extendDatabase(ctx: Context): void {
     unique: ['name']
   })
 
+  // 用户设定集表
+  ctx.database.extend('medialuna_character_profile', {
+    id: 'unsigned',
+    uid: 'unsigned',
+    name: 'string',
+    description: 'text',
+    imageUrls: 'text',
+    isPublic: 'boolean',
+    publicDescription: 'text',
+    sourceProfileId: 'unsigned',
+    sourceOwnerUid: 'unsigned',
+    createdAt: 'timestamp',
+    updatedAt: 'timestamp'
+  }, {
+    autoInc: true,
+    indexes: [
+      'uid',
+      'name',
+      'isPublic',
+      ['uid', 'name'],
+      ['isPublic', 'updatedAt']
+    ]
+  })
+
   // 任务表
   // uid 直接使用 Koishi 的 user.id，通过 session.uid 或 WebUI 登录获取
   ctx.database.extend('medialuna_task', {

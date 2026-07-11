@@ -10,8 +10,10 @@ import taskPlugin from './task'
 import censorBypassPlugin from './prompt-censor-bypass'
 import webuiAuthPlugin from './webui-auth'
 import koishiCommandsPlugin from './koishi-commands'
+import characterProfilePlugin from './character-profile'
 import vitsPlugin from './vits'
 import dalleSizeEnhancerPlugin from './dalle-size-enhancer'
+import flowAspectEnhancerPlugin from './gemini-aspect-enhancer'
 import videoDurationEnhancerPlugin from './video-duration-enhancer'
 
 // 连接器插件
@@ -34,6 +36,7 @@ import comfyuiConnectorPlugin from './connector-comfyui'
 import chatlunaConnectorPlugin from './connector-chatluna'
 import testConnectorPlugin from './connector-test'
 import doubaoConnectorPlugin from './connector-doubao'
+import byteplusImageConnectorPlugin from './connector-byteplus-image'
 import minimaxConnectorPlugin from './connector-minimax'
 import edgeTTSConnectorPlugin from './connector-edge-tts'
 import openaiTTSConnectorPlugin from './connector-openai-tts'
@@ -51,9 +54,11 @@ export const builtinPlugins: PluginDefinition[] = [
   taskPlugin,
   censorBypassPlugin,
   webuiAuthPlugin,
+  characterProfilePlugin,
   koishiCommandsPlugin,
   vitsPlugin,
   dalleSizeEnhancerPlugin,
+  flowAspectEnhancerPlugin,
   videoDurationEnhancerPlugin,
   // 连接器插件
   agnesImageConnectorPlugin,
@@ -75,6 +80,7 @@ export const builtinPlugins: PluginDefinition[] = [
   chatlunaConnectorPlugin,
   testConnectorPlugin,
   doubaoConnectorPlugin,
+  byteplusImageConnectorPlugin,
   minimaxConnectorPlugin,
   edgeTTSConnectorPlugin,
   openaiTTSConnectorPlugin,
@@ -92,9 +98,11 @@ export {
   taskPlugin,
   censorBypassPlugin,
   webuiAuthPlugin,
+  characterProfilePlugin,
   koishiCommandsPlugin,
   vitsPlugin,
   dalleSizeEnhancerPlugin,
+  flowAspectEnhancerPlugin,
   videoDurationEnhancerPlugin,
   agnesImageConnectorPlugin,
   agnesVideoConnectorPlugin,
@@ -115,6 +123,7 @@ export {
   chatlunaConnectorPlugin,
   testConnectorPlugin,
   doubaoConnectorPlugin,
+  byteplusImageConnectorPlugin,
   minimaxConnectorPlugin,
   edgeTTSConnectorPlugin,
   openaiTTSConnectorPlugin,
@@ -132,8 +141,10 @@ export type { TaskPluginConfig } from './task'
 export type { CensorBypassConfig } from './prompt-censor-bypass'
 export type { WebuiAuthConfig } from './webui-auth'
 export type { KoishiCommandsConfig } from './koishi-commands'
+export type { CharacterProfileConfig } from './character-profile'
 export type { VitsPluginConfig, VitsSpeaker, VitsSayOptions } from './vits'
 export type { DalleSizeEnhancerConfig } from './dalle-size-enhancer'
+export type { FlowAspectEnhancerConfig } from './gemini-aspect-enhancer'
 export type { VideoDurationEnhancerConfig } from './video-duration-enhancer'
 export type { ChatLunaPluginConfig, ToolConfig, PresetToolConfig } from './connector-chatluna/config'
 export type { ChatLunaPromptEnhanceConfig } from './connector-chatluna/middleware'
@@ -141,6 +152,7 @@ export type { MiddlewareConfig as ModelScopeMiddlewareConfig, LoraAlias as Model
 
 // 导出服务
 export { CacheService } from './cache'
+export { CharacterProfileService } from './character-profile'
 export { PresetService, RemoteSyncService } from './preset'
 export { TaskService } from './task'
 export { WebuiAuthService } from './webui-auth'
@@ -149,5 +161,6 @@ export { MediaLunaVits, getChannelSpeakerIdBase, getSpeakerIdFromChannelId, getC
 // 导出中间件工厂
 export { createCensorBypassMiddleware } from './prompt-censor-bypass'
 export { createDalleSizeEnhancerMiddleware } from './dalle-size-enhancer'
+export { createFlowAspectEnhancerMiddleware } from './gemini-aspect-enhancer'
 export { createVideoDurationEnhancerMiddleware } from './video-duration-enhancer'
 export { createChatLunaPromptEnhanceMiddleware } from './connector-chatluna/middleware'

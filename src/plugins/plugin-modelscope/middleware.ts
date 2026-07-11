@@ -12,6 +12,13 @@ interface ParsedSize {
   source: 'explicit' | 'landscape' | 'portrait'
 }
 
+function normalizePromptForSizeParsing(prompt: string): string {
+  return prompt
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
+    .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, ' ')
+}
+
 /**
  * 解析 prompt 中的尺寸信息
  * 优先级：明确尺寸 (1024x768) > 横屏/竖屏关键词
@@ -25,19 +32,20 @@ function parseSizeFromPrompt(
   prompt: string,
   config: MiddlewareConfig
 ): { cleanPrompt: string; size: ParsedSize | null } {
-  let cleanPrompt = prompt
+  const normalizedPrompt = normalizePromptForSizeParsing(prompt)
+  let cleanPrompt = normalizedPrompt
   let size: ParsedSize | null = null
 
   // 1. 优先检测明确尺寸：数字x数字 或 数字*数字
-  const explicitSizeRegex = /(\d{2,4})\s*[xX*×]\s*(\d{2,4})/g
-  const explicitMatch = explicitSizeRegex.exec(prompt)
+  const explicitSizeRegex = /(^|[^\d])(\d{2,4})\s*[xX*×]\s*(\d{2,4})(?=$|[^\d])/i
+  const explicitMatch = explicitSizeRegex.exec(normalizedPrompt)
   if (explicitMatch) {
-    const width = parseInt(explicitMatch[1], 10)
-    const height = parseInt(explicitMatch[2], 10)
+    const width = parseInt(explicitMatch[2], 10)
+    const height = parseInt(explicitMatch[3], 10)
     // 合理范围检查
     if (width >= 64 && width <= 2048 && height >= 64 && height <= 2048) {
       size = { width, height, source: 'explicit' }
-      cleanPrompt = cleanPrompt.replace(explicitMatch[0], '').trim()
+      cleanPrompt = cleanPrompt.replace(explicitMatch[0], (_full, prefix: string) => prefix || '').trim()
     }
   }
 
@@ -45,7 +53,7 @@ function parseSizeFromPrompt(
   if (!size) {
     // 横屏关键词
     const landscapeRegex = /(横屏|横图|landscape)/gi
-    const landscapeMatch = landscapeRegex.exec(prompt)
+    const landscapeMatch = landscapeRegex.exec(normalizedPrompt)
     if (landscapeMatch) {
       size = {
         width: config.landscapeWidth,
@@ -58,7 +66,7 @@ function parseSizeFromPrompt(
     // 竖屏关键词
     if (!size) {
       const portraitRegex = /(竖屏|竖图|portrait)/gi
-      const portraitMatch = portraitRegex.exec(prompt)
+      const portraitMatch = portraitRegex.exec(normalizedPrompt)
       if (portraitMatch) {
         size = {
           width: config.portraitWidth,

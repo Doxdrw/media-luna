@@ -4,6 +4,13 @@ import type { ConfigField, CardField } from '../../core/types'
 
 // ============ 类型定义 ============
 
+export interface ModelScopeApiKeyEntry {
+  key: string
+  weight?: number
+  enabled?: boolean
+  note?: string
+}
+
 /** LoRA 别名配置 */
 export interface LoraAlias {
   /** 别名（用户在 prompt 中使用的名称，如 "kotone"） */
@@ -45,8 +52,49 @@ export const connectorFields: ConfigField[] = [
     key: 'apiKey',
     label: 'API Key',
     type: 'password',
-    required: true,
-    description: 'ModelScope Token (ms-xxxxxx)'
+    description: '兼容旧配置的单个 ModelScope Token。若填写了下方多 Key 列表，将优先使用列表'
+  },
+  {
+    key: 'apiKeys',
+    label: 'API Key 列表',
+    type: 'table',
+    default: [],
+    description: '支持配置多个 Token。系统会按请求内容做无状态分流，并在单次请求内自动回退下一个可用 Key',
+    columns: [
+      {
+        key: 'key',
+        label: 'API Key',
+        type: 'text',
+        required: true,
+        placeholder: 'ms-xxxxxx'
+      },
+      {
+        key: 'weight',
+        label: '权重',
+        type: 'number',
+        placeholder: '默认 1',
+        width: '100px'
+      },
+      {
+        key: 'enabled',
+        label: '启用',
+        type: 'boolean',
+        width: '80px'
+      },
+      {
+        key: 'note',
+        label: '备注',
+        type: 'text',
+        placeholder: '可选备注',
+        width: '160px'
+      }
+    ],
+    tableConfig: {
+      enableImport: true,
+      enableExport: true,
+      enableBatchDelete: true,
+      enableSelection: true
+    }
   },
   {
     key: 'model',

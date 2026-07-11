@@ -268,7 +268,7 @@ export function createDalleSizeEnhancerMiddleware(): MiddlewareDefinition {
     category: 'transform',
     phase: 'lifecycle-pre-request',
     after: ['preset'],
-    before: ['request'],
+    before: ['prompt-censor-bypass', 'request'],
     configGroup: 'dalle-size-enhancer',
 
     async execute(mctx, next) {

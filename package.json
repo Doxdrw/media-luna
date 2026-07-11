@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-media-luna",
   "description": "ai media生成插件",
-  "version": "1.9.4",
+  "version": "1.9.28",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "exports": {
@@ -42,7 +42,10 @@
   ],
   "dependencies": {
     "@initencounter/vits": "^0.0.3",
-    "msedge-tts": "^2.0.3"
+    "jpeg-js": "^0.4.4",
+    "msedge-tts": "^2.0.3",
+    "pngjs": "^7.0.0",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@koishijs/client": "^5.30.0",

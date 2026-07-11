@@ -25,6 +25,7 @@ declare module 'koishi' {
   interface Tables {
     medialuna_channel: MediaLunaChannel
     medialuna_preset: MediaLunaPreset
+    medialuna_character_profile: MediaLunaCharacterProfile
     medialuna_task: MediaLunaTask
     medialuna_asset_cache: MediaLunaAssetCache
   }
@@ -61,6 +62,20 @@ export interface MediaLunaPreset {
   remoteUrl?: string
   thumbnail?: string  // 缓存后的本地缩略图URL
   thumbnailRemote?: string  // 原始远程缩略图URL
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface MediaLunaCharacterProfile {
+  id: number
+  uid: number
+  name: string
+  description: string
+  imageUrls: string
+  isPublic: boolean
+  publicDescription: string
+  sourceProfileId?: number
+  sourceOwnerUid?: number
   createdAt: Date
   updatedAt: Date
 }

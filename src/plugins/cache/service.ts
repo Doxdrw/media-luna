@@ -40,6 +40,11 @@ export interface CacheStats {
   backend: string
 }
 
+export interface CacheWriteOptions {
+  schemeName?: string
+  dedupe?: boolean
+}
+
 /**
  * 统一存储服务
  * 根据配置的 backend 自动选择存储方式（local/s3/webdav）
@@ -241,9 +246,13 @@ export class CacheService {
    * 根据配置的后端自动选择存储方式
    * @param schemeName 可选的存储方案名称，用于选择特定的存储后端
    */
-  async cache(data: Buffer | ArrayBuffer, mime: string, filename?: string, sourceUrl?: string, schemeName?: string): Promise<CachedFile> {
+  async cache(data: Buffer | ArrayBuffer, mime: string, filename?: string, sourceUrl?: string, schemeNameOrOptions?: string | CacheWriteOptions): Promise<CachedFile> {
+    const writeOptions: CacheWriteOptions = typeof schemeNameOrOptions === 'string'
+      ? { schemeName: schemeNameOrOptions }
+      : (schemeNameOrOptions || {})
+
     // 获取指定方案的配置
-    const effectiveConfig = this.getSchemeConfig(schemeName)
+    const effectiveConfig = this.getSchemeConfig(writeOptions.schemeName)
 
     if (!effectiveConfig.enabled) {
       throw new Error('Cache is disabled')
@@ -264,23 +273,27 @@ export class CacheService {
     const contentHash = this.generateContentHash(buffer)
 
     // 检查是否已有相同内容的缓存
-    const existingByContent = await this.findByContentHash(contentHash)
-    if (existingByContent) {
-      // 检查后端是否一致，不一致则需要重新存储
-      if (existingByContent.backend === backend) {
-        await this.updateAccessTime(existingByContent.contentHash)
-        this.logger.debug('Cache hit by content hash: %s', contentHash)
-        return this.dbRecordToCachedFile(existingByContent)
-      } else {
-        // 后端不一致，删除旧记录后重新缓存
-        this.logger.debug('Backend changed (%s -> %s), re-caching: %s', existingByContent.backend, backend, contentHash)
-        await this.delete(existingByContent.contentHash)
+    if (writeOptions.dedupe !== false) {
+      const existingByContent = await this.findByContentHash(contentHash)
+      if (existingByContent) {
+        // 检查后端是否一致，不一致则需要重新存储
+        if (existingByContent.backend === backend) {
+          await this.updateAccessTime(existingByContent.contentHash)
+          this.logger.debug('Cache hit by content hash: %s', contentHash)
+          return this.dbRecordToCachedFile(existingByContent)
+        } else {
+          // 后端不一致，删除旧记录后重新缓存
+          this.logger.debug('Backend changed (%s -> %s), re-caching: %s', existingByContent.backend, backend, contentHash)
+          await this.delete(existingByContent.contentHash)
+        }
       }
     }
 
     // 根据后端存储文件
     const ext = this.getExtension(mime, filename)
-    const storageKey = `${contentHash}${ext}`
+    const storageKey = writeOptions.dedupe === false
+      ? `${contentHash}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`
+      : `${contentHash}${ext}`
     let cachedUrl: string
 
     switch (backend) {
@@ -303,7 +316,9 @@ export class CacheService {
     }
 
     // 计算源哈希（如果有源 URL）
-    const sourceHash = sourceUrl ? this.generateSourceHash(sourceUrl) : contentHash
+    const sourceHash = sourceUrl
+      ? this.generateSourceHash(sourceUrl)
+      : (writeOptions.dedupe === false ? `${contentHash}-${Date.now()}` : contentHash)
 
     // 保存到数据库
     const now = new Date()
@@ -321,7 +336,7 @@ export class CacheService {
     })
 
     const cached: CachedFile = {
-      id: contentHash,
+      id: writeOptions.dedupe === false ? storageKey.replace(ext, '') : contentHash,
       filename: filename || `file${ext}`,
       mime,
       size: buffer.length,
@@ -333,9 +348,9 @@ export class CacheService {
     }
 
     // 更新内存缓存
-    this.memoryCache.set(contentHash, cached)
+    this.memoryCache.set(cached.id, cached)
 
-    this.logger.debug('Cached file to %s: %s', backend, contentHash)
+    this.logger.debug('Cached file to %s: %s', backend, cached.id)
     return cached
   }
 
@@ -392,22 +407,28 @@ export class CacheService {
   /**
    * 从 URL 下载并缓存
    */
-  async cacheFromUrl(url: string): Promise<CachedFile> {
-    const currentBackend = this.config.backend || 'local'
+  async cacheFromUrl(url: string, schemeNameOrOptions?: string | CacheWriteOptions): Promise<CachedFile> {
+    const writeOptions: CacheWriteOptions = typeof schemeNameOrOptions === 'string'
+      ? { schemeName: schemeNameOrOptions }
+      : (schemeNameOrOptions || {})
+    const effectiveConfig = this.getSchemeConfig(writeOptions.schemeName)
+    const currentBackend = effectiveConfig.backend || 'local'
 
     // 先检查是否已有相同源 URL 的缓存
-    const sourceHash = this.generateSourceHash(url)
-    const existingBySource = await this.findBySourceHash(sourceHash)
-    if (existingBySource) {
-      // 检查后端是否一致，不一致则需要重新存储
-      if (existingBySource.backend === currentBackend) {
-        await this.updateAccessTime(existingBySource.contentHash)
-        this.logger.debug('Cache hit by source hash: %s -> %s', url, sourceHash)
-        return this.dbRecordToCachedFile(existingBySource)
-      } else {
-        // 后端不一致，删除旧记录后重新缓存
-        this.logger.debug('Backend changed (%s -> %s), re-caching: %s', existingBySource.backend, currentBackend, url)
-        await this.delete(existingBySource.contentHash)
+    if (writeOptions.dedupe !== false) {
+      const sourceHash = this.generateSourceHash(url)
+      const existingBySource = await this.findBySourceHash(sourceHash)
+      if (existingBySource) {
+        // 检查后端是否一致，不一致则需要重新存储
+        if (existingBySource.backend === currentBackend) {
+          await this.updateAccessTime(existingBySource.contentHash)
+          this.logger.debug('Cache hit by source hash: %s -> %s', url, sourceHash)
+          return this.dbRecordToCachedFile(existingBySource)
+        } else {
+          // 后端不一致，删除旧记录后重新缓存
+          this.logger.debug('Backend changed (%s -> %s), re-caching: %s', existingBySource.backend, currentBackend, url)
+          await this.delete(existingBySource.contentHash)
+        }
       }
     }
 
@@ -419,7 +440,7 @@ export class CacheService {
     const mime = this.guessMimeFromUrl(url)
     const filename = url.split('/').pop()?.split('?')[0] || 'downloaded'
 
-    return this.cache(response, mime, filename, url)
+    return this.cache(response, mime, filename, url, writeOptions)
   }
 
   /** 获取缓存文件信息 */

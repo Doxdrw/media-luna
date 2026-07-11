@@ -1,8 +1,94 @@
 // ModelScope 连接器
 
 import { Context } from 'koishi'
+import { createHash } from 'crypto'
 import type { ConnectorDefinition, OutputAsset, FileData, ConnectorRequestLog } from '../../core/types'
-import { connectorFields, connectorCardFields } from './config'
+import { connectorFields, connectorCardFields, type ModelScopeApiKeyEntry } from './config'
+
+interface ResolvedApiKey {
+  key: string
+  index: number
+  weight: number
+  note?: string
+}
+
+function resolveApiKeys(config: Record<string, any>): ResolvedApiKey[] {
+  const result: ResolvedApiKey[] = []
+  const rawApiKeys = Array.isArray(config.apiKeys) ? config.apiKeys : []
+
+  for (let index = 0; index < rawApiKeys.length; index++) {
+    const item = rawApiKeys[index] as ModelScopeApiKeyEntry | undefined
+    const key = typeof item?.key === 'string' ? item.key.trim() : ''
+    if (!key) continue
+    if (item?.enabled === false) continue
+    const weight = Number(item?.weight)
+    result.push({
+      key,
+      index,
+      weight: Number.isFinite(weight) && weight > 0 ? weight : 1,
+      note: typeof item?.note === 'string' ? item.note.trim() || undefined : undefined
+    })
+  }
+
+  if (result.length > 0) return result
+
+  const fallbackKey = typeof config.apiKey === 'string' ? config.apiKey.trim() : ''
+  if (!fallbackKey) return []
+  return [{ key: fallbackKey, index: 0, weight: 1 }]
+}
+
+function computeStableKeySeed(prompt: string, config: Record<string, any>, files: FileData[]): number {
+  const seedInput = JSON.stringify({
+    model: config.model || '',
+    prompt,
+    width: config.width || null,
+    height: config.height || null,
+    fileCount: files.length,
+    firstFileName: files[0]?.filename || '',
+    firstFileMime: files[0]?.mime || ''
+  })
+  const hash = createHash('sha256').update(seedInput).digest()
+  return hash.readUInt32BE(0)
+}
+
+function buildApiKeyAttemptOrder(prompt: string, config: Record<string, any>, files: FileData[]): ResolvedApiKey[] {
+  const keys = resolveApiKeys(config)
+  if (keys.length <= 1) return keys
+
+  const totalWeight = keys.reduce((sum, item) => sum + item.weight, 0)
+  const seed = computeStableKeySeed(prompt, config, files)
+  let cursor = totalWeight > 0 ? seed % totalWeight : 0
+  let selectedIndex = 0
+
+  for (let index = 0; index < keys.length; index++) {
+    cursor -= keys[index].weight
+    if (cursor < 0) {
+      selectedIndex = index
+      break
+    }
+  }
+
+  return [
+    ...keys.slice(selectedIndex),
+    ...keys.slice(0, selectedIndex)
+  ]
+}
+
+function shouldRetryWithNextKey(error: any): boolean {
+  const status = Number(error?.response?.status ?? error?.status)
+  if ([401, 403, 429].includes(status)) return true
+
+  const message = String(error?.message || error || '').toLowerCase()
+  return message.includes('401')
+    || message.includes('403')
+    || message.includes('429')
+    || message.includes('rate limit')
+    || message.includes('too many requests')
+    || message.includes('unauthorized')
+    || message.includes('forbidden')
+    || message.includes('invalid api key')
+    || message.includes('token is invalid')
+}
 
 /** ModelScope 生成函数 */
 async function generate(
@@ -13,7 +99,6 @@ async function generate(
 ): Promise<OutputAsset[]> {
   const {
     apiUrl = 'https://api-inference.modelscope.cn/',
-    apiKey,
     model = 'MusePublic/Qwen-image',
     enableImageInput = false,
     negativePrompt,
@@ -28,7 +113,8 @@ async function generate(
     pollInterval = 5000
   } = config
 
-  if (!apiKey) {
+  const apiKeyAttempts = buildApiKeyAttemptOrder(prompt, config, files)
+  if (apiKeyAttempts.length === 0) {
     throw new Error('ModelScope API Key is required')
   }
 
@@ -109,63 +195,78 @@ async function generate(
     }
   }
 
-  const headers = {
-    'Authorization': `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-    'X-ModelScope-Async-Mode': 'true'
-  }
-
   ctx.logger('media-luna').debug('[ModelScope] Request body: %o', requestBody)
 
-  // 创建任务
-  const createResponse = await ctx.http.post(`${baseUrl}v1/images/generations`, requestBody, {
-    headers,
-    timeout: 30000
-  })
-
-  ctx.logger('media-luna').debug('[ModelScope] Create response: %o', createResponse)
-
-  const taskId = createResponse.task_id
-  if (!taskId) {
-    throw new Error(`No task_id in response: ${JSON.stringify(createResponse)}`)
-  }
-
-  // 轮询等待结果
-  const startTime = Date.now()
-  const timeoutMs = timeout * 1000
-
-  while (Date.now() - startTime < timeoutMs) {
-    await new Promise(resolve => setTimeout(resolve, pollInterval))
-
-    const statusResponse = await ctx.http.get(`${baseUrl}v1/tasks/${taskId}`, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'X-ModelScope-Task-Type': 'image_generation'
-      },
-      timeout: 30000
-    })
-
-    ctx.logger('media-luna').debug('[ModelScope] Status response: %o', statusResponse)
-
-    const taskStatus = statusResponse.task_status
-
-    if (taskStatus === 'SUCCEED') {
-      const outputImages = statusResponse.output_images || []
-      return outputImages.map((url: string) => ({
-        kind: 'image' as const,
-        url,
-        mime: 'image/png',
-        meta: { source: 'modelscope', model, taskId }
-      }))
+  let lastError: any = null
+  for (let attemptIndex = 0; attemptIndex < apiKeyAttempts.length; attemptIndex++) {
+    const apiKeyEntry = apiKeyAttempts[attemptIndex]
+    const headers = {
+      'Authorization': `Bearer ${apiKeyEntry.key}`,
+      'Content-Type': 'application/json',
+      'X-ModelScope-Async-Mode': 'true'
     }
 
-    if (taskStatus === 'FAILED') {
-      throw new Error(statusResponse.message || 'ModelScope generation failed')
+    try {
+      ctx.logger('media-luna').debug('[ModelScope] Using api key #%d%s', apiKeyEntry.index + 1, apiKeyEntry.note ? ` (${apiKeyEntry.note})` : '')
+
+      const createResponse = await ctx.http.post(`${baseUrl}v1/images/generations`, requestBody, {
+        headers,
+        timeout: 30000
+      })
+
+      ctx.logger('media-luna').debug('[ModelScope] Create response: %o', createResponse)
+
+      const taskId = createResponse.task_id
+      if (!taskId) {
+        throw new Error(`No task_id in response: ${JSON.stringify(createResponse)}`)
+      }
+
+      const startTime = Date.now()
+      const timeoutMs = timeout * 1000
+
+      while (Date.now() - startTime < timeoutMs) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval))
+
+        const statusResponse = await ctx.http.get(`${baseUrl}v1/tasks/${taskId}`, {
+          headers: {
+            'Authorization': `Bearer ${apiKeyEntry.key}`,
+            'Content-Type': 'application/json',
+            'X-ModelScope-Task-Type': 'image_generation'
+          },
+          timeout: 30000
+        })
+
+        ctx.logger('media-luna').debug('[ModelScope] Status response: %o', statusResponse)
+
+        const taskStatus = statusResponse.task_status
+
+        if (taskStatus === 'SUCCEED') {
+          const outputImages = statusResponse.output_images || []
+          return outputImages.map((url: string) => ({
+            kind: 'image' as const,
+            url,
+            mime: 'image/png',
+            meta: { source: 'modelscope', model, taskId, apiKeyIndex: apiKeyEntry.index }
+          }))
+        }
+
+        if (taskStatus === 'FAILED') {
+          throw new Error(statusResponse.message || 'ModelScope generation failed')
+        }
+      }
+
+      throw new Error('ModelScope generation timed out')
+    } catch (error) {
+      lastError = error
+      const canRetry = attemptIndex < apiKeyAttempts.length - 1 && shouldRetryWithNextKey(error)
+      ctx.logger('media-luna').warn('[ModelScope] api key #%d failed%s: %s', apiKeyEntry.index + 1, canRetry ? ', fallback next key' : '', error instanceof Error ? error.message : String(error))
+      if (!canRetry) {
+        throw error
+      }
     }
   }
 
-  throw new Error('ModelScope generation timed out')
+  throw lastError || new Error('ModelScope generation failed')
 }
 
 /** ModelScope 连接器定义 */
@@ -194,6 +295,7 @@ export const ModelScopeConnector: ConnectorDefinition = {
       seed,
       loras
     } = config
+    const apiKeys = resolveApiKeys(config)
 
     // 计算实际会发送的图片数量
     const imageCount = enableImageInput
@@ -212,7 +314,8 @@ export const ModelScopeConnector: ConnectorDefinition = {
         guidance: guidance ? Number(guidance) : undefined,
         seed: seed !== undefined && seed !== null && seed !== '' ? Number(seed) : undefined,
         loras: loras || undefined,
-        imageInput: enableImageInput && imageCount > 0 ? true : undefined
+        imageInput: enableImageInput && imageCount > 0 ? true : undefined,
+        apiKeyCount: apiKeys.length > 0 ? apiKeys.length : undefined
       }
     }
   }

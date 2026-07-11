@@ -94,6 +94,7 @@ export function registerChannelCommand(options: RegisterChannelCommandOptions): 
             await session?.send(`已注入任务参考图 ${resolved.injectedCount} 张（${taskHint}）`)
           }
         }
+
       }
 
       if (commandOptions?.image) {

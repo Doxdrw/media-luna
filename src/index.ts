@@ -18,6 +18,7 @@ export { MediaLunaService, definePlugin } from './core'
 export type {
   PluginDefinition,
   PluginContext,
+  MediaLunaExtensionRegistration,
   PluginLogger,
   PluginInfo,
   ServiceDefinition,

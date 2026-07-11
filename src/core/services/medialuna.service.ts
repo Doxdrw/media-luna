@@ -13,7 +13,9 @@ import type {
   GenerationResult,
   ChannelConfig,
   SettingsPanelDefinition,
-  SettingsPanelInfo
+  SettingsPanelInfo,
+  MediaLunaExtensionRegistration,
+  PluginInfo
 } from '../../types'
 import { PluginLoader } from '../plugin/loader'
 import { ConfigService } from '../config'
@@ -320,6 +322,33 @@ export class MediaLunaService extends Service {
     }
   }
 
+  /**
+   * 注册来自标准 Koishi 插件的 Media Luna 扩展
+   *
+   * 目标是让外部包像 ChatLuna 生态一样，先由 Koishi 加载，
+   * 再通过统一入口把能力接入 media-luna，而不是再维护一层额外模块列表。
+   */
+  async registerExtension(registration: MediaLunaExtensionRegistration): Promise<() => Promise<void>> {
+    const { definition, moduleName } = registration
+    const markedDefinition = definition as PluginDefinition & {
+      _koishiExtension?: boolean
+      _moduleName?: string
+    }
+
+    markedDefinition._koishiExtension = true
+    if (moduleName) {
+      markedDefinition._moduleName = moduleName
+    }
+
+    await this._pluginLoader.load(markedDefinition)
+
+    return async () => {
+      if (this._pluginLoader.has(definition.id)) {
+        await this._pluginLoader.unload(definition.id)
+      }
+    }
+  }
+
   // ============ 执行 API ============
 
   /**
@@ -380,18 +409,7 @@ export class MediaLunaService extends Service {
   /**
    * 获取插件信息列表
    */
-  getPluginInfos(): Array<{
-    id: string
-    name: string
-    description?: string
-    version?: string
-    enabled: boolean
-    configFields: import('../../types').ConfigField[]
-    config: Record<string, any>
-    actions: Array<{ name: string; label: string; type?: string; icon?: string; apiEvent: string }>
-    middlewares: Array<{ name: string; displayName: string; phase: string; enabled: boolean }>
-    connector?: { id: string; name: string; supportedTypes: string[] }
-  }> {
+  getPluginInfos(): PluginInfo[] {
     return this._pluginLoader.getPluginInfos()
   }
 
