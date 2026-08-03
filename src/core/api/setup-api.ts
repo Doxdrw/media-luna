@@ -156,7 +156,7 @@ export function registerSetupApi(ctx: Context): void {
         return { success: false, error: 'MediaLuna service not ready' }
       }
 
-      if (!uid || uid <= 0) {
+      if (!Number.isInteger(uid) || uid < 0) {
         return { success: false, error: 'Valid uid is required' }
       }
 
@@ -215,7 +215,7 @@ export function registerSetupApi(ctx: Context): void {
         return { success: false, error: 'MediaLuna service not ready' }
       }
 
-      if (!uid || uid <= 0) {
+      if (!Number.isInteger(uid) || uid < 0) {
         return { success: false, error: 'Valid uid is required' }
       }
 
