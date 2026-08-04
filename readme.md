@@ -299,6 +299,9 @@ Media Luna 支持两级配置：
 | Suno | apiUrl, apiKey | Suno AI 音乐 |
 | OpenAI Video | apiUrl, apiKey, model | OpenAI 视频生成，支持可选参考图 |
 | Runway | apiUrl, apiKey, model | Runway 视频 |
+| xAI Grok Imagine Video | apiUrl, apiKey, model | 文生、图生、参考图、编辑与续写视频 |
+
+视频指令参数、xAI 模式和投递策略详见 [视频连接器文档](docs/video-connectors.md)。
 
 ## WebUI 页面
 

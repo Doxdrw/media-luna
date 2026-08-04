@@ -38,4 +38,17 @@ test('duration can be derived from frame count and frame rate', () => {
   )
   assert.deepEqual(result, { seconds: 5, source: 'channel-frames' })
 })
+test('xAI edit mode does not invent a billable duration', () => {
+  const mctx = context({}, 'edit this video', { mode: 'edit', duration: 6 })
+  mctx.channel.connectorId = 'xai-video'
+  assert.equal(resolveDuration(mctx, defaultVideoDurationEnhancerConfig), null)
+})
 
+test('xAI extend mode still uses the requested extension duration', () => {
+  const mctx = context({ mode: 'extend', duration: 8 }, 'continue', { mode: 'edit', duration: 6 })
+  mctx.channel.connectorId = 'xai-video'
+  assert.deepEqual(
+    resolveDuration(mctx, defaultVideoDurationEnhancerConfig),
+    { seconds: 8, source: 'parameter' }
+  )
+})

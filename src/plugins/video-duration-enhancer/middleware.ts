@@ -50,6 +50,10 @@ function clampSeconds(seconds: number, config: VideoDurationEnhancerConfig): num
 
 export function resolveDuration(mctx: MiddlewareContext, config: VideoDurationEnhancerConfig): DurationDetection | null {
   const parameters = mctx.parameters || {}
+  const effectiveMode = String(parameters.mode ?? mctx.channel?.connectorConfig?.mode ?? '').toLowerCase()
+  if (mctx.channel?.connectorId === 'xai-video' && effectiveMode === 'edit') {
+    return null
+  }
 
   const explicit = positiveNumber(
     parameters.duration
