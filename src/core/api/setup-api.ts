@@ -54,7 +54,7 @@ export function registerSetupApi(ctx: Context): void {
       let userBound = false
 
       // 检查当前请求的 auth
-      if (this?.auth?.id) {
+      if (this?.auth?.id != null) {
         boundUid = this.auth.id
         userBound = true
       } else {
