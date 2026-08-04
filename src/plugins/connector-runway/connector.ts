@@ -11,7 +11,8 @@ async function generate(
   ctx: Context,
   config: Record<string, any>,
   files: FileData[],
-  prompt: string
+  prompt: string,
+  parameters?: Record<string, any>
 ): Promise<OutputAsset[]> {
   const {
     apiUrl,
@@ -38,9 +39,14 @@ async function generate(
     parameters: {}
   }
 
-  if (duration) body.parameters.durationSeconds = Number(duration)
-  if (aspectRatio) body.parameters.aspectRatio = aspectRatio
-  if (seed !== undefined && seed !== null && seed !== '') body.parameters.seed = Number(seed)
+  const requestedDuration = parameters?.duration ?? parameters?.time ?? duration
+  const requestedAspectRatio = parameters?.aspectRatio ?? aspectRatio
+  const requestedSeed = parameters?.seed ?? seed
+  if (requestedDuration) body.parameters.durationSeconds = Number(requestedDuration)
+  if (requestedAspectRatio) body.parameters.aspectRatio = requestedAspectRatio
+  if (requestedSeed !== undefined && requestedSeed !== null && requestedSeed !== '') {
+    body.parameters.seed = Number(requestedSeed)
+  }
 
   // 处理输入图片 (Gen-3 支持 Image-to-Video)
   const imageFile = files.find(f => f.mime.startsWith('image/'))
@@ -94,7 +100,9 @@ async function generate(
           mime: 'video/mp4',
           meta: {
             model,
-            duration,
+            duration: requestedDuration,
+            aspectRatio: requestedAspectRatio,
+            seed: requestedSeed,
             taskId
           }
         }]
@@ -120,16 +128,21 @@ export const RunwayConnector: ConnectorDefinition = {
   fields: connectorFields,
   cardFields: connectorCardFields,
   defaultTags: ['text2video', 'img2video'],
+  commandParameters: ['duration', 'aspectRatio', 'seed'],
   generate,
 
-  getRequestLog(config, files, prompt): ConnectorRequestLog {
+  getRequestLog(config, files, prompt, parameters): ConnectorRequestLog {
     const { apiUrl, model } = config
     return {
       endpoint: apiUrl,
       model,
       prompt,
       fileCount: files.length,
-      parameters: {}
+      parameters: {
+        duration: parameters?.duration ?? parameters?.time ?? config.duration,
+        aspectRatio: parameters?.aspectRatio ?? config.aspectRatio,
+        seed: parameters?.seed ?? config.seed
+      }
     }
   }
 }

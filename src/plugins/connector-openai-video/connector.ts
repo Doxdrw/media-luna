@@ -90,6 +90,25 @@ async function pollVideoResult(
   throw new Error('OpenAI Video task timeout')
 }
 
+export function buildOpenAIVideoRequestBody(
+  config: Record<string, any>,
+  prompt: string,
+  inputImageUrls: string[],
+  parameters?: Record<string, any>
+): Record<string, any> {
+  const body: Record<string, any> = {
+    model: parameters?.model ?? config.model,
+    prompt
+  }
+  const size = parameters?.resolution ?? config.size
+  if (size) body.size = size
+  appendNumber(body, 'seconds', resolveDurationSeconds(config, parameters))
+  appendNumber(body, 'fps', parameters?.fps ?? parameters?.framerate ?? config.fps)
+  appendNumber(body, 'seed', parameters?.seed ?? config.seed)
+  if (inputImageUrls.length > 0) body.image = inputImageUrls[0]
+  return body
+}
+
 async function generate(
   ctx: Context,
   config: Record<string, any>,
@@ -101,9 +120,6 @@ async function generate(
     apiUrl,
     apiKey,
     model,
-    size,
-    fps,
-    seed,
     enableImageInput = true,
     timeout = 900,
     pollInterval = 5000
@@ -117,12 +133,7 @@ async function generate(
     throw new Error('OpenAI Video 图生视频需要可公开访问的输入图片 URL，请启用 storage-input 并配置可公网访问的存储后端')
   }
 
-  const body: Record<string, any> = { model, prompt }
-  if (size) body.size = size
-  appendNumber(body, 'seconds', resolveDurationSeconds(config, parameters))
-  appendNumber(body, 'fps', fps)
-  appendNumber(body, 'seed', seed)
-  if (inputImageUrls.length > 0) body.image = inputImageUrls[0]
+  const body = buildOpenAIVideoRequestBody(config, prompt, inputImageUrls, parameters)
 
   const createUrl = resolveEndpoint(apiUrl, '/videos')
   const createResponse = await ctx.http.post(createUrl, body, {
@@ -145,7 +156,7 @@ async function generate(
     mime: 'video/mp4',
     meta: {
       taskId,
-      model: result.model || model,
+      model: result.model || body.model,
       status: result.status,
       progress: result.progress,
       size: result.size,
@@ -163,20 +174,23 @@ export const OpenAIVideoConnector: ConnectorDefinition = {
   fields: connectorFields,
   cardFields: connectorCardFields,
   defaultTags: ['text2video', 'img2video'],
+  commandParameters: ['duration', 'resolution', 'fps', 'seed'],
   generate,
 
   getRequestLog(config, files, prompt, parameters): ConnectorRequestLog {
-    const { apiUrl, model, size, seconds, fps, enableImageInput = true } = config
+    const { apiUrl, enableImageInput = true } = config
     const inputImageUrls = enableImageInput ? getInputImageUrls(parameters) : []
+    const body = buildOpenAIVideoRequestBody(config, prompt, inputImageUrls, parameters)
     return {
       endpoint: resolveEndpoint(apiUrl, '/videos'),
-      model,
+      model: body.model,
       prompt,
       fileCount: files.filter(file => file.mime?.startsWith('image/')).length,
       parameters: {
-        size,
-        seconds: resolveDurationSeconds(config, parameters) ?? seconds,
-        fps,
+        size: body.size,
+        seconds: body.seconds,
+        fps: body.fps,
+        seed: body.seed,
         imageInput: inputImageUrls.length > 0 || undefined
       }
     }
