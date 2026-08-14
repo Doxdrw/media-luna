@@ -233,6 +233,8 @@ export type StandardGenerationParameter =
   | 'cfg'
   | 'denoise'
   | 'motion'
+  | 'quality'
+  | 'count'
   | 'negativePrompt'
 
 /** 连接器专用的 Koishi 指令选项 */

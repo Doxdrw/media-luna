@@ -38,6 +38,8 @@ const STANDARD_COMMAND_OPTIONS: Record<StandardGenerationParameter, StandardComm
   cfg: { name: 'cfg', declaration: '-c, --cfg <cfg:number>', description: 'CFG 比例' },
   denoise: { name: 'denoise', declaration: '-d, --denoise <denoise:number>', description: '重绘幅度' },
   motion: { name: 'motion', declaration: '-m, --motion <motion:number>', description: '运动幅度' },
+  quality: { name: 'quality', declaration: '-q, --quality <quality:string>', description: '生成质量' },
+  count: { name: 'count', declaration: '-n, --count <count:number>', description: '生成数量' },
   negativePrompt: { name: 'negativePrompt', declaration: '--negative-prompt <negativePrompt:string>', description: '负面提示词' }
 }
 

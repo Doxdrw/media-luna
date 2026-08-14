@@ -299,6 +299,13 @@ Media Luna 支持两级配置：
 | Suno | apiUrl, apiKey | Suno AI 音乐 |
 | OpenAI Video | apiUrl, apiKey, model | OpenAI 视频生成，支持可选参考图 |
 | Runway | apiUrl, apiKey, model | Runway 视频 |
+| xAI Grok Imagine Image | apiUrl, apiKey, model | 文生图、单图编辑和多图编辑 |
+
+### xAI Grok Imagine Image
+
+连接器默认使用 `grok-imagine-image-2.0`。无输入图时调用文生图接口；同一消息附带 1-3 张 JPEG、PNG 或 WebP 图片时自动进入编辑接口。图片编辑默认继承第一张输入图的宽高比，使用 `-a/--aspect-ratio` 可在单次请求中覆盖。
+
+可用指令参数：`-r/--resolution <1k|2k>`、`-a/--aspect-ratio <比例>`、`-q/--quality <low|medium>`、`-n/--count <1-10>`。其中 quality 仅用于文生图。xAI 返回的 URL 为临时地址，建议启用缓存插件及时转存；也可以将响应格式配置为 Base64。
 
 ## WebUI 页面
 
