@@ -48,6 +48,27 @@ export default definePlugin({
       apiEvent: 'media-luna/cache/stats'
     },
     {
+      name: 'repair-references',
+      label: '修复参考资源',
+      type: 'primary',
+      icon: 'refresh',
+      apiEvent: 'media-luna/cache/repair-references'
+    },
+    {
+      name: 'scan-orphans',
+      label: '扫描孤儿文件',
+      type: 'default',
+      icon: 'search',
+      apiEvent: 'media-luna/cache/scan-orphans'
+    },
+    {
+      name: 'cleanup-orphans',
+      label: '清理孤儿文件',
+      type: 'error',
+      icon: 'delete',
+      apiEvent: 'media-luna/cache/cleanup-orphans'
+    },
+    {
       name: 'clear',
       label: '清空缓存',
       type: 'error',
@@ -62,19 +83,25 @@ export default definePlugin({
     // 获取配置的 publicPath
     const config = ctx.getConfig<CachePluginConfig>()
     const publicPath = config.publicPath || defaultCacheConfig.publicPath
+    const cache = ctx.getService<CacheService>('cache')
+    if (!cache) {
+      ctx.logger.warn('Cache service not available, skipping cache initialization')
+      return
+    }
+
+    const server = (ctx.ctx as any).server || (ctx.ctx as any).get?.('server')
+    if (server?.config?.selfUrl) cache.setBaseUrl(server.config.selfUrl)
+    await cache.initialize()
 
     // 注册 HTTP 路由提供缓存文件访问
     ctx.ctx.inject(['server'], (injectedCtx) => {
-      const cache = ctx.getService<CacheService>('cache')
-      if (!cache) {
-        ctx.logger.warn('Cache service not available, skipping HTTP route registration')
-        return
-      }
-
       // 获取 selfUrl 并设置 baseUrl
       const selfUrl = injectedCtx.server.config.selfUrl
       if (selfUrl) {
         cache.setBaseUrl(selfUrl.replace(/\/$/, ''))
+        cache.repairReferences({ downloadRemote: false }).catch(error => {
+          ctx.logger.warn('Failed to rewrite cache URLs after server initialization: %s', error)
+        })
         ctx.logger.info('Cache HTTP route registered at %s', publicPath)
       } else {
         ctx.logger.warn('selfUrl not configured, cache URLs will not be available')

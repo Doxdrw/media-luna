@@ -3,6 +3,7 @@
 import { Context } from 'koishi'
 import type { PluginLogger } from '../../core'
 import { createPluginLogger } from '../../core'
+import type { CacheService } from '../cache/service'
 
 /** 数据库记录类型 */
 interface MediaLunaPreset {
@@ -57,7 +58,7 @@ export class PresetService {
   private _ctx: Context
   private _logger: PluginLogger
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, private _getCacheService?: () => CacheService | undefined) {
     this._ctx = ctx
     this._logger = createPluginLogger(ctx.logger('media-luna'), 'preset')
   }
@@ -191,7 +192,8 @@ export class PresetService {
       updatedAt: now
     })
 
-    return this._toData(record as MediaLunaPreset)
+    await this._reconcileReferences(false)
+    return (await this.getById(record.id)) || this._toData(record as MediaLunaPreset)
   }
 
   /** 更新预设 */
@@ -221,6 +223,7 @@ export class PresetService {
     if (data.thumbnailRemote !== undefined) updateData.thumbnailRemote = data.thumbnailRemote
 
     await this._ctx.database.set('medialuna_preset', { id }, updateData)
+    await this._reconcileReferences(false)
 
     return this.getById(id)
   }
@@ -231,6 +234,7 @@ export class PresetService {
     if (!existing) return false
 
     await this._ctx.database.remove('medialuna_preset', { id })
+    await this._reconcileReferences(true)
     return true
   }
 
@@ -240,6 +244,7 @@ export class PresetService {
     if (remotePresets.length === 0) return 0
 
     await this._ctx.database.remove('medialuna_preset', { source: 'api' })
+    await this._reconcileReferences(true)
     return remotePresets.length
   }
 
@@ -259,5 +264,15 @@ export class PresetService {
       }
     }
     return count
+  }
+
+  private async _reconcileReferences(demoteUnreferenced: boolean): Promise<void> {
+    const cache = this._getCacheService?.()
+    if (!cache) return
+    try {
+      await cache.repairReferences({ downloadRemote: false, demoteUnreferenced })
+    } catch (error) {
+      this._logger.warn('Failed to reconcile reference assets: %s', error)
+    }
   }
 }

@@ -82,8 +82,8 @@ export class CharacterProfileService {
       createdAt: now,
       updatedAt: now
     })
-
-    return this.toData(record as MediaLunaCharacterProfile)
+    await this.reconcileReferences(false)
+    return (await this.getById(record.id)) || this.toData(record as MediaLunaCharacterProfile)
   }
 
   async update(id: number, uid: number, patch: Partial<Pick<CharacterProfileData, 'name' | 'description' | 'imageUrls' | 'isPublic' | 'publicDescription'>>): Promise<CharacterProfileData | null> {
@@ -101,6 +101,7 @@ export class CharacterProfileService {
     if (patch.publicDescription !== undefined) updateData.publicDescription = patch.publicDescription
 
     await this.ctx.database.set('medialuna_character_profile', { id }, updateData)
+    await this.reconcileReferences(false)
     return this.getById(id)
   }
 
@@ -113,6 +114,7 @@ export class CharacterProfileService {
     const existing = await this.getById(id)
     if (!existing || existing.uid !== uid) return false
     await this.ctx.database.remove('medialuna_character_profile', { id })
+    await this.reconcileReferences(true)
     return true
   }
 
@@ -297,7 +299,7 @@ export class CharacterProfileService {
     let expandedPrompt = escapedPrompt
 
     for (const profile of matchedProfiles) {
-      const injectedFiles = await this.loadReferenceImages(profile.imageUrls)
+      const injectedFiles = await this.loadReferenceImages(profile.name, profile.imageUrls)
       const description = profile.description.trim()
 
       if (!description && injectedFiles.length === 0) {
@@ -332,58 +334,20 @@ export class CharacterProfileService {
     }
   }
 
-  private async loadReferenceImages(urls: string[]): Promise<FileData[]> {
+  private async loadReferenceImages(profileName: string, urls: string[]): Promise<FileData[]> {
     const files: FileData[] = []
+    const cache = this.ctx.mediaLuna?.getService<CacheService>('cache')
 
-    for (const url of urls) {
-      try {
-        if (url.startsWith('http://') || url.startsWith('https://')) {
-          const response = await this.ctx.http.get(url, {
-            responseType: 'arraybuffer'
-          }) as ArrayBuffer
-
-          files.push({
-            data: response,
-            mime: this.guessMimeFromUrl(url),
-            filename: url.split('/').pop()?.split('?')[0] || 'character-reference.png'
-          })
-          continue
-        }
-
-        if (url.startsWith('data:')) {
-          const matches = url.match(/^data:([^;]+);base64,(.+)$/)
-          if (!matches) continue
-
-          const mime = matches[1]
-          const buffer = Buffer.from(matches[2], 'base64')
-          const ext = mime.split('/')[1] || 'png'
-          files.push({
-            data: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
-            mime,
-            filename: `character-reference.${ext}`
-          })
-        }
-      } catch {
-        // ignore broken profile images
+    for (let index = 0; index < urls.length; index++) {
+      const url = urls[index]
+      const loaded = cache ? await cache.loadReference(url) : null
+      if (!loaded) {
+        throw new Error(`人物设定「${profileName}」的第 ${index + 1} 张参考图已丢失，请编辑设定并重新上传图片`)
       }
+      files.push(loaded)
     }
 
     return files
-  }
-
-  private guessMimeFromUrl(url: string): string {
-    const ext = url.split('.').pop()?.split('?')[0]?.toLowerCase()
-    switch (ext) {
-      case 'jpg':
-      case 'jpeg':
-        return 'image/jpeg'
-      case 'webp':
-        return 'image/webp'
-      case 'gif':
-        return 'image/gif'
-      default:
-        return 'image/png'
-    }
   }
 
   private getStorageSchemeNames(): Array<string | undefined> {
@@ -450,7 +414,7 @@ export class CharacterProfileService {
     let lastError: unknown = null
     for (const schemeName of schemeNames) {
       try {
-        return await cache.cacheFromUrl(url, { schemeName, dedupe: false })
+        return await cache.cacheFromUrl(url, { schemeName, persistent: true })
       } catch (error) {
         lastError = error
       }
@@ -519,7 +483,7 @@ export class CharacterProfileService {
       try {
         return await cache.cache(file.data, file.mime, file.filename, undefined, {
           schemeName,
-          dedupe: false
+          persistent: true
         })
       } catch (error) {
         lastError = error
@@ -544,6 +508,16 @@ export class CharacterProfileService {
     }
 
     return profiles
+  }
+
+  private async reconcileReferences(demoteUnreferenced: boolean): Promise<void> {
+    const cache = this.ctx.mediaLuna?.getService<CacheService>('cache')
+    if (!cache) return
+    try {
+      await cache.repairReferences({ downloadRemote: false, demoteUnreferenced })
+    } catch (error) {
+      this.ctx.logger('media-luna').warn('[character-profile] Failed to reconcile reference assets: %s', error)
+    }
   }
 
   private async listAll(): Promise<CharacterProfileData[]> {

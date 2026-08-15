@@ -209,7 +209,7 @@ export class RemoteSyncService {
     // 缓存缩略图
     if (presetData.thumbnailRemote) {
       try {
-        const cached = await cache.cacheFromUrl(presetData.thumbnailRemote)
+        const cached = await cache.cacheFromUrl(presetData.thumbnailRemote, { persistent: true })
         // 直接使用 cached.url，它已经包含正确的存储后端 URL
         result.thumbnail = cached.url || presetData.thumbnailRemote
         this._logger.debug('Cached thumbnail: %s -> %s', presetData.thumbnailRemote, result.thumbnail)
@@ -229,7 +229,7 @@ export class RemoteSyncService {
     const cachedReferenceImages: string[] = []
     for (const remoteUrl of presetData.referenceImagesRemote || []) {
       try {
-        const cached = await cache.cacheFromUrl(remoteUrl)
+        const cached = await cache.cacheFromUrl(remoteUrl, { persistent: true })
         // 直接使用 cached.url，它已经包含正确的存储后端 URL
         const cachedUrl = cached.url || remoteUrl
         cachedReferenceImages.push(cachedUrl)
@@ -294,7 +294,7 @@ export class RemoteSyncService {
 
           // 检查是否需要重新缓存图片
           const existing = await this._presetService.getByRemoteId(template.id, apiUrl)
-          const needsCaching = this._needsImageCaching(existing, presetData)
+          const needsCaching = await this._needsImageCaching(existing, presetData)
 
           if (needsCaching) {
             // 缓存图片资源
@@ -367,10 +367,10 @@ export class RemoteSyncService {
    * - 远程URL变化需要重新缓存
    * - 本地缓存URL为空需要缓存
    */
-  private _needsImageCaching(
+  private async _needsImageCaching(
     existing: PresetData | null,
     newData: Omit<PresetData, 'id'>
-  ): boolean {
+  ): Promise<boolean> {
     // 新预设需要缓存
     if (!existing) return true
 
@@ -386,6 +386,14 @@ export class RemoteSyncService {
     // 本地缓存URL为空（之前缓存失败或未缓存）
     if (newData.thumbnailRemote && !existing.thumbnail) return true
     if (newRemote.length > 0 && existing.referenceImages.length === 0) return true
+
+    const cache = this._getCacheService()
+    if (cache) {
+      if (existing.thumbnail && !(await cache.isReferenceAvailable(existing.thumbnail))) return true
+      for (const url of existing.referenceImages) {
+        if (!(await cache.isReferenceAvailable(url))) return true
+      }
+    }
 
     return false
   }
