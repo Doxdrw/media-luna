@@ -29,7 +29,8 @@
   "scripts": {
     "build:server": "tsc",
     "build:client": "koishi-console build",
-    "build": "npm run build:server && npm run build:client"
+    "build": "npm run build:server && npm run build:client",
+    "test": "node --test test/*.test.cjs"
   },
   "keywords": [
     "chatbot",
