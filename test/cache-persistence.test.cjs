@@ -20,6 +20,8 @@ require.extensions['.ts'] = (module, filename) => {
 }
 
 const { CacheService } = require('../src/plugins/cache/service.ts')
+const { RemoteSyncService } = require('../src/plugins/preset/remote-sync.service.ts')
+const { formatGenerationResult } = require('../src/plugins/koishi-commands/formatters/delivery.ts')
 
 class MemoryDatabase {
   constructor() {
@@ -58,7 +60,7 @@ class MemoryDatabase {
   }
 }
 
-function createFixture(overrides = {}, database = new MemoryDatabase()) {
+function createFixture(overrides = {}, database = new MemoryDatabase(), setBaseUrl = true) {
   const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'media-luna-cache-'))
   const logger = { debug() {}, info() {}, warn() {}, error() {} }
   const ctx = {
@@ -81,7 +83,7 @@ function createFixture(overrides = {}, database = new MemoryDatabase()) {
     ...overrides
   }
   const service = new CacheService(ctx, config)
-  service.setBaseUrl('http://127.0.0.1:5141')
+  if (setBaseUrl) service.setBaseUrl('http://127.0.0.1:5141')
   return { baseDir, database, service, config, ctx }
 }
 
@@ -256,15 +258,13 @@ test('missing persistent references are reported and never auto-deleted', async 
   assert.equal(await fixture.service.loadReference(url), null)
 })
 
-test('manual repair restores a missing remote preset reference', async (t) => {
+test('remote preset references are not downloaded or promoted by repair', async (t) => {
   const fixture = createFixture({ expireDays: 0 })
   t.after(() => fs.rmSync(fixture.baseDir, { recursive: true, force: true }))
   const localUrl = 'http://127.0.0.1:5140/media-luna/cache/bbbbbbbbbbbbbbbb.png'
   const remoteUrl = 'https://example.test/reference.png'
-  fixture.ctx.http.get = async (url) => {
-    assert.equal(url, remoteUrl)
-    return Uint8Array.from([1, 2, 3, 4]).buffer
-  }
+  let requestCount = 0
+  fixture.ctx.http.get = async () => { requestCount++; throw new Error('unexpected HTTP request') }
   await fixture.database.create('medialuna_preset', {
     name: 'Remote', displayName: 'Remote', promptTemplate: '', tags: '[]',
     referenceImages: JSON.stringify([localUrl]), referenceImagesRemote: JSON.stringify([remoteUrl]),
@@ -272,12 +272,102 @@ test('manual repair restores a missing remote preset reference', async (t) => {
     createdAt: new Date(), updatedAt: new Date()
   })
 
-  const result = await fixture.service.repairReferences({ downloadRemote: true })
-  assert.equal(result.redownloaded, 1)
+  const result = await fixture.service.repairReferences({ downloadRemote: true, demoteUnreferenced: true })
+  assert.equal(result.redownloaded, 0)
   assert.equal(result.unrecoverable.length, 0)
-  const repairedUrl = JSON.parse(fixture.database.tables.medialuna_preset[0].referenceImages)[0]
-  assert.match(repairedUrl, /^http:\/\/127\.0\.0\.1:5141\//)
-  assert.ok(await fixture.service.loadReference(repairedUrl))
+  assert.equal(requestCount, 0)
+  assert.equal(fixture.database.tables.medialuna_asset_cache.length, 0)
+  assert.deepEqual(JSON.parse(fixture.database.tables.medialuna_preset[0].referenceImages), [localUrl])
+})
+
+test('server-ready URL rewrite keeps generated media temporary and sendable', async (t) => {
+  const database = new MemoryDatabase()
+  const fixture = createFixture({ expireDays: 0 }, database, false)
+  t.after(() => fs.rmSync(fixture.baseDir, { recursive: true, force: true }))
+
+  await fixture.service.initialize()
+  const generated = await fixture.service.cache(Buffer.from('generated'), 'image/png', 'generated.png')
+  assert.match(generated.url, /^\/media-luna\/cache\//)
+  assert.equal(database.tables.medialuna_asset_cache[0].persistent, false)
+
+  fixture.service.setBaseUrl('http://127.0.0.1:5141')
+  assert.equal(
+    fixture.service.resolvePublicUrl(generated.url),
+    `http://127.0.0.1:5141${generated.url}`
+  )
+  assert.equal(await fixture.service.rewriteLocalUrls(), 1)
+  assert.match(database.tables.medialuna_asset_cache[0].cachedUrl, /^http:\/\/127\.0\.0\.1:5141\//)
+  assert.equal(database.tables.medialuna_asset_cache[0].persistent, false)
+  assert.match(database.tables.medialuna_asset_cache[0].storagePath.replace(/\\/g, '/'), /media-luna\/cache\//)
+})
+
+test('delivery resolves relative generated media URLs before formatting', () => {
+  const output = formatGenerationResult({
+    success: true,
+    output: [{ kind: 'image', url: '/media-luna/cache/generated.png' }]
+  }, {
+    platform: 'onebot',
+    resolveAssetUrl: (url) => `http://127.0.0.1:5141${url}`
+  })
+
+  assert.match(output, /<image url="http:\/\/127\.0\.0\.1:5141\/media-luna\/cache\/generated\.png"\/>/)
+})
+
+test('remote sync stores source URLs and purges legacy remote media cache once', async () => {
+  const records = []
+  let reconciles = 0
+  let removedSources = []
+  const presetService = {
+    async listByRemoteUrl() { return records.filter(item => item.remoteUrl === 'https://example.test/api') },
+    async getByRemoteId(id, remoteUrl) { return records.find(item => item.remoteId === id && item.remoteUrl === remoteUrl) || null },
+    async list() { return records },
+    async create(data) { const record = { ...data, id: records.length + 1 }; records.push(record); return record },
+    async update(id, patch) { const record = records.find(item => item.id === id); Object.assign(record, patch); return record },
+    async delete() { return true },
+    async reconcileReferences() { reconciles++ }
+  }
+  const cache = {
+    async removeCachedSources(urls) { removedSources = urls; return urls.length }
+  }
+  const logger = { debug() {}, info() {}, warn() {}, error() {} }
+  const ctx = {
+    scope: { isActive: true },
+    logger: () => logger,
+    http: { get: async () => { throw new Error('remote media must not be cached') } }
+  }
+  const service = new RemoteSyncService(ctx, presetService, () => cache)
+  service.fetchRemoteTemplates = async () => ({
+    notModified: false,
+    templates: [{
+      id: 7,
+      title: 'Remote preset',
+      prompt: '{prompt}',
+      type: 'img2img',
+      tags: [],
+      category: 'template',
+      file_path: 'https://cdn.example.test/main.png',
+      thumbnail_path: 'https://cdn.example.test/thumb.webp',
+      refs: [
+        { id: 2, file_path: 'https://cdn.example.test/second.png', is_placeholder: false, position: 2 },
+        { id: 1, file_path: 'https://cdn.example.test/first.png', is_placeholder: false, position: 1 }
+      ],
+      created_at: '2026-08-15'
+    }]
+  })
+
+  const result = await service.sync('https://example.test/api')
+  assert.equal(result.success, true)
+  assert.equal(reconciles, 1)
+  assert.deepEqual(records[0].referenceImages, [
+    'https://cdn.example.test/first.png',
+    'https://cdn.example.test/second.png'
+  ])
+  assert.equal(records[0].thumbnail, 'https://cdn.example.test/thumb.webp')
+  assert.deepEqual(new Set(removedSources), new Set([
+    'https://cdn.example.test/first.png',
+    'https://cdn.example.test/second.png',
+    'https://cdn.example.test/thumb.webp'
+  ]))
 })
 
 test('orphan cleanup requires explicit confirmation', async (t) => {

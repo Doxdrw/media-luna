@@ -93,16 +93,30 @@ export default definePlugin({
 
     // 注册 HTTP 路由提供缓存文件访问
     ctx.ctx.inject(['server'], (injectedCtx) => {
-      // 获取 selfUrl 并设置 baseUrl
-      const selfUrl = injectedCtx.server.config.selfUrl
-      if (selfUrl) {
-        cache.setBaseUrl(selfUrl.replace(/\/$/, ''))
-        cache.repairReferences({ downloadRemote: false }).catch(error => {
-          ctx.logger.warn('Failed to rewrite cache URLs after server initialization: %s', error)
+      let configuredBaseUrl = ''
+      const configurePublicUrls = async () => {
+        const selfUrl = injectedCtx.server.config.selfUrl || injectedCtx.server.selfUrl
+        if (!selfUrl || selfUrl.includes('undefined')) return
+        const normalized = selfUrl.replace(/\/$/, '')
+        if (configuredBaseUrl === normalized) return
+
+        configuredBaseUrl = normalized
+        cache.setBaseUrl(normalized)
+        const rewritten = await cache.rewriteLocalUrls()
+        await cache.repairReferences({ downloadRemote: false })
+        ctx.logger.info('Cache HTTP route registered at %s%s (rewritten=%d)', normalized, publicPath, rewritten)
+      }
+
+      injectedCtx.on('server/ready', () => {
+        configurePublicUrls().catch(error => {
+          ctx.logger.warn('Failed to configure cache public URLs: %s', error)
         })
-        ctx.logger.info('Cache HTTP route registered at %s', publicPath)
-      } else {
-        ctx.logger.warn('selfUrl not configured, cache URLs will not be available')
+      })
+
+      if (injectedCtx.server.port) {
+        configurePublicUrls().catch(error => {
+          ctx.logger.warn('Failed to configure cache public URLs: %s', error)
+        })
       }
 
       // 注册文件访问路由: {publicPath}/:filename

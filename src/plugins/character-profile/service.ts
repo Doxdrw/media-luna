@@ -28,7 +28,8 @@ export interface ExpandedCharacterProfile {
 export class CharacterProfileService {
   constructor(
     private ctx: Context,
-    private getConfig?: () => CharacterProfileConfig
+    private getConfig?: () => CharacterProfileConfig,
+    private getCacheService?: () => CacheService | undefined
   ) {}
 
   private toData(record: MediaLunaCharacterProfile): CharacterProfileData {
@@ -218,7 +219,7 @@ export class CharacterProfileService {
   async syncProfileStorage(options?: { uid?: number; name?: string }): Promise<{ updated: number; skipped: number; failed: number; profiles: string[] }> {
     const profiles = await this.resolveProfilesForSync(options)
 
-    const cache = this.ctx.mediaLuna?.getService<CacheService>('cache')
+    const cache = this.getCacheService?.()
     if (!cache) {
       throw new Error('缓存服务不可用')
     }
@@ -336,7 +337,7 @@ export class CharacterProfileService {
 
   private async loadReferenceImages(profileName: string, urls: string[]): Promise<FileData[]> {
     const files: FileData[] = []
-    const cache = this.ctx.mediaLuna?.getService<CacheService>('cache')
+    const cache = this.getCacheService?.()
 
     for (let index = 0; index < urls.length; index++) {
       const url = urls[index]
@@ -511,7 +512,7 @@ export class CharacterProfileService {
   }
 
   private async reconcileReferences(demoteUnreferenced: boolean): Promise<void> {
-    const cache = this.ctx.mediaLuna?.getService<CacheService>('cache')
+    const cache = this.getCacheService?.()
     if (!cache) return
     try {
       await cache.repairReferences({ downloadRemote: false, demoteUnreferenced })

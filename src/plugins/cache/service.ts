@@ -170,6 +170,49 @@ export class CacheService {
     this.logger.debug('Base URL set to: %s', this.baseUrl)
   }
 
+  /** 将本地缓存路由转换为适配器可直接访问的绝对 URL。 */
+  resolvePublicUrl(url: string): string {
+    const value = String(url || '').trim()
+    if (!value || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(value)) return value
+
+    const publicPath = this.publicPath.replace(/\/$/, '')
+    if (this.publicBaseUrl && value.startsWith(`${publicPath}/`)) {
+      return `${this.publicBaseUrl}/${path.basename(value)}`
+    }
+
+    if (!this.baseUrl) return value
+    return `${this.baseUrl}${value.startsWith('/') ? '' : '/'}${value}`
+  }
+
+  /** 在 server 确定实际监听地址后改写已有本地缓存 URL。 */
+  async rewriteLocalUrls(): Promise<number> {
+    if (!this.baseUrl && !this.publicBaseUrl) return 0
+
+    const records = await this.ctx.database.get('medialuna_asset_cache', { backend: 'local' })
+    let rewritten = 0
+    for (const record of records) {
+      const nextUrl = this.buildLocalUrl(record.contentHash, path.extname(record.cachedKey))
+      if (nextUrl === record.cachedUrl) continue
+
+      await this.ctx.database.set('medialuna_asset_cache', { id: record.id }, { cachedUrl: nextUrl })
+      const cached = this.memoryCache.get(record.contentHash)
+      if (cached?.recordId === record.id) cached.url = nextUrl
+      rewritten++
+    }
+    return rewritten
+  }
+
+  /** 删除已不再被本地业务数据引用的远程预设缓存。 */
+  async removeCachedSources(urls: string[]): Promise<number> {
+    let removed = 0
+    for (const url of new Set(urls.filter(Boolean))) {
+      const record = await this.findBySourceHash(this.generateSourceHash(url))
+      if (!record || record.persistent) continue
+      if (await this.deleteRecord(record, true)) removed++
+    }
+    return removed
+  }
+
   /** 获取基础URL */
   getBaseUrl(): string {
     return this.baseUrl
@@ -664,6 +707,9 @@ export class CacheService {
 
     const presets = await this.ctx.database.get('medialuna_preset', {})
     for (const preset of presets) {
+      // 远程预设直接使用远程媒体，不进入本地持久资源生命周期。
+      if (preset.source === 'api') continue
+
       const urls = this.parseStringArray(preset.referenceImages)
       const remoteUrls = this.parseStringArray(preset.referenceImagesRemote)
       const repaired: string[] = []

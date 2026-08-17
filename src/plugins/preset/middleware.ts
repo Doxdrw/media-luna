@@ -51,16 +51,9 @@ export function createPresetMiddleware(): MiddlewareDefinition {
 
       // 注入预设参考图
       if (preset.referenceImages && preset.referenceImages.length > 0) {
-        const cache = context.getService<CacheService>('cache')
-        if (!cache) throw new Error('缓存服务不可用，无法读取预设参考图')
-
-        const available = await Promise.all(preset.referenceImages.map(url => cache.isReferenceAvailable(url)))
-        if (available.some(value => !value)) {
-          await cache.repairReferences({ downloadRemote: true })
-          preset = (await presetService.getByName(presetName)) || preset
-        }
-
-        const presetFiles = await loadReferenceImages(cache, preset.name, preset.referenceImages)
+        const presetFiles = preset.source === 'api'
+          ? await loadRemoteReferenceImages(context, preset.name, preset.referenceImages)
+          : await loadLocalReferenceImages(context, preset.name, preset.referenceImages)
         context.files = [...presetFiles, ...context.files]
       }
 
@@ -90,11 +83,14 @@ export function createPresetMiddleware(): MiddlewareDefinition {
 }
 
 /** 加载参考图 */
-async function loadReferenceImages(
-  cache: CacheService,
+async function loadLocalReferenceImages(
+  context: MiddlewareContext,
   presetName: string,
   urls: string[]
 ): Promise<FileData[]> {
+  const cache = context.getService<CacheService>('cache')
+  if (!cache) throw new Error('缓存服务不可用，无法读取预设参考图')
+
   const files: FileData[] = []
 
   for (let index = 0; index < urls.length; index++) {
@@ -106,6 +102,53 @@ async function loadReferenceImages(
   }
 
   return files
+}
+
+/** 远程预设不落本地缓存，在生成时直接读取源站媒体。 */
+async function loadRemoteReferenceImages(
+  context: MiddlewareContext,
+  presetName: string,
+  urls: string[]
+): Promise<FileData[]> {
+  const files: FileData[] = []
+
+  for (let index = 0; index < urls.length; index++) {
+    const url = urls[index]
+    try {
+      const data = await context.ctx.http.get<ArrayBuffer>(url, {
+        responseType: 'arraybuffer',
+        timeout: 30000
+      })
+      if (!data?.byteLength) throw new Error('响应内容为空')
+      files.push({
+        data,
+        mime: guessMimeFromUrl(url),
+        filename: getFilenameFromUrl(url, index)
+      })
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new Error(`远程预设「${presetName}」的第 ${index + 1} 张参考图读取失败：${reason}`)
+    }
+  }
+
+  return files
+}
+
+function guessMimeFromUrl(url: string): string {
+  const pathname = url.split(/[?#]/, 1)[0].toLowerCase()
+  if (pathname.endsWith('.jpg') || pathname.endsWith('.jpeg')) return 'image/jpeg'
+  if (pathname.endsWith('.webp')) return 'image/webp'
+  if (pathname.endsWith('.gif')) return 'image/gif'
+  if (pathname.endsWith('.bmp')) return 'image/bmp'
+  return 'image/png'
+}
+
+function getFilenameFromUrl(url: string, index: number): string {
+  try {
+    return new URL(url).pathname.split('/').pop() || `preset-reference-${index + 1}.png`
+  } catch {
+    return `preset-reference-${index + 1}.png`
+  }
 }
 
 /** 应用模板替换 */

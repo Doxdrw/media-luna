@@ -215,7 +215,7 @@ export const cacheConfigFields: ConfigField[] = [
     label: '持久资源目录',
     type: 'text',
     default: 'data/media-luna/assets',
-    description: '人物设定图、预设参考图和缩略图的本地保存目录，不受缓存过期和容量淘汰影响',
+    description: '人物设定图和本地预设媒体的保存目录，不受缓存过期和容量淘汰影响；远程预设不写入此目录',
     showWhen: { field: 'backend', value: 'local' }
   },
   {

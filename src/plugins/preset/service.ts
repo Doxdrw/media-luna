@@ -49,6 +49,10 @@ export interface PresetData {
   thumbnailRemote?: string
 }
 
+interface PresetMutationOptions {
+  reconcile?: boolean
+}
+
 /**
  * 预设服务
  *
@@ -170,7 +174,7 @@ export class PresetService {
   }
 
   /** 创建预设 */
-  async create(data: Omit<PresetData, 'id'>): Promise<PresetData> {
+  async create(data: Omit<PresetData, 'id'>, options: PresetMutationOptions = {}): Promise<PresetData> {
     const now = new Date()
     const uniqueName = await this._generateUniqueName(data.name)
 
@@ -192,12 +196,12 @@ export class PresetService {
       updatedAt: now
     })
 
-    await this._reconcileReferences(false)
+    if (options.reconcile !== false) await this.reconcileReferences(false)
     return (await this.getById(record.id)) || this._toData(record as MediaLunaPreset)
   }
 
   /** 更新预设 */
-  async update(id: number, data: Partial<Omit<PresetData, 'id'>>): Promise<PresetData | null> {
+  async update(id: number, data: Partial<Omit<PresetData, 'id'>>, options: PresetMutationOptions = {}): Promise<PresetData | null> {
     const existing = await this.getById(id)
     if (!existing) return null
 
@@ -223,18 +227,18 @@ export class PresetService {
     if (data.thumbnailRemote !== undefined) updateData.thumbnailRemote = data.thumbnailRemote
 
     await this._ctx.database.set('medialuna_preset', { id }, updateData)
-    await this._reconcileReferences(false)
+    if (options.reconcile !== false) await this.reconcileReferences(false)
 
     return this.getById(id)
   }
 
   /** 删除预设 */
-  async delete(id: number): Promise<boolean> {
+  async delete(id: number, options: PresetMutationOptions = {}): Promise<boolean> {
     const existing = await this.getById(id)
     if (!existing) return false
 
     await this._ctx.database.remove('medialuna_preset', { id })
-    await this._reconcileReferences(true)
+    if (options.reconcile !== false) await this.reconcileReferences(true)
     return true
   }
 
@@ -244,7 +248,7 @@ export class PresetService {
     if (remotePresets.length === 0) return 0
 
     await this._ctx.database.remove('medialuna_preset', { source: 'api' })
-    await this._reconcileReferences(true)
+    await this.reconcileReferences(true)
     return remotePresets.length
   }
 
@@ -255,18 +259,19 @@ export class PresetService {
       const existing = await this.getByName(preset.name)
       if (existing) {
         if (existing.source === 'api') {
-          await this.update(existing.id, { ...preset, source })
+          await this.update(existing.id, { ...preset, source }, { reconcile: false })
           count++
         }
       } else {
-        await this.create({ ...preset, source })
+        await this.create({ ...preset, source }, { reconcile: false })
         count++
       }
     }
+    await this.reconcileReferences(false)
     return count
   }
 
-  private async _reconcileReferences(demoteUnreferenced: boolean): Promise<void> {
+  async reconcileReferences(demoteUnreferenced: boolean): Promise<void> {
     const cache = this._getCacheService?.()
     if (!cache) return
     try {
