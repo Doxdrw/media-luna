@@ -38,4 +38,3 @@ test('duration can be derived from frame count and frame rate', () => {
   )
   assert.deepEqual(result, { seconds: 5, source: 'channel-frames' })
 })
-
