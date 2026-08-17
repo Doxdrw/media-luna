@@ -52,6 +52,7 @@ xAI 返回临时视频地址。建议启用 cache 插件，让结果在发送前
 
 ## 其他连接器
 
-- OpenAI Video 保留原有 OpenAI-compatible JSON 协议，并支持 duration、resolution、fps 和 seed 覆盖。
-- Runway 保留原有第三方 `/tasks` 协议，并支持 duration、aspectRatio 和 seed 覆盖。
+- OpenAI Video 使用官方 multipart 请求，并通过 `input_reference` 上传参考图；支持 duration 与 resolution。
+- Runway 使用官方 `text_to_video`、`image_to_video` 和任务轮询接口；支持模式、时长、比例/分辨率和种子覆盖。
 - Agnes Video、NewAPI Video 与 ComfyUI 已接入统一参数名。
+- LTX 2.3 桥接除统一参数外，继续提供 `--global-prompt`、`--local-prompts`、`--local-durations` 与 `--timeline`。
