@@ -1276,18 +1276,6 @@ export class CacheService {
     }
 
     if (!this.baseUrl) {
-      try {
-        const server = (this.ctx as any).server || (this.ctx as any).get?.('server')
-        const selfUrl = server?.config?.selfUrl
-        if (selfUrl) {
-          this.baseUrl = selfUrl.replace(/\/$/, '')
-        }
-      } catch {
-        // 没有可用的 server 服务时保留相对 URL，避免写死端口。
-      }
-    }
-
-    if (!this.baseUrl) {
       return `${publicPath}/${id}${ext}`
     }
 

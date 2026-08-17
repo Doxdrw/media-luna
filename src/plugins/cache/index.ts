@@ -89,8 +89,6 @@ export default definePlugin({
       return
     }
 
-    const server = (ctx.ctx as any).server || (ctx.ctx as any).get?.('server')
-    if (server?.config?.selfUrl) cache.setBaseUrl(server.config.selfUrl)
     await cache.initialize()
 
     // 注册 HTTP 路由提供缓存文件访问
