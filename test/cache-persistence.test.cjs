@@ -20,6 +20,7 @@ require.extensions['.ts'] = (module, filename) => {
 }
 
 const { CacheService } = require('../src/plugins/cache/service.ts')
+const { sanitizeOrphanFileNames } = require('../src/core/api/cache-api.ts')
 const { RemoteSyncService } = require('../src/plugins/preset/remote-sync.service.ts')
 const { formatGenerationResult } = require('../src/plugins/koishi-commands/formatters/delivery.ts')
 
@@ -59,6 +60,16 @@ class MemoryDatabase {
     this.tables[table] = this.tables[table].filter(record => !this.matches(record, query))
   }
 }
+
+test('orphan scan API does not expose server directory paths', () => {
+  assert.deepEqual(
+    sanitizeOrphanFileNames([
+      'D:\\private\\media-luna\\cache\\orphan.png',
+      '/srv/koishi/data/media-luna/cache/second.webp'
+    ]),
+    ['orphan.png', 'second.webp']
+  )
+})
 
 function createFixture(overrides = {}, database = new MemoryDatabase(), setBaseUrl = true) {
   const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'media-luna-cache-'))

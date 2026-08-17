@@ -1,6 +1,11 @@
 // 缓存管理 API
 
 import { Context } from 'koishi'
+import path from 'path'
+
+export function sanitizeOrphanFileNames(files: string[]): string[] {
+  return files.map(file => path.basename(file.replace(/\\/g, '/')))
+}
 
 /**
  * 注册缓存管理 API
@@ -194,7 +199,7 @@ export function registerCacheApi(ctx: Context): void {
         data: {
           count: result.files.length,
           totalSize: result.totalSize,
-          files: result.files,
+          files: sanitizeOrphanFileNames(result.files),
           message: `发现 ${result.files.length} 个孤儿文件，共 ${(result.totalSize / 1024 / 1024).toFixed(1)} MB`
         }
       }
