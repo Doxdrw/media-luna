@@ -17,6 +17,7 @@ require.extensions['.ts'] = (module, filename) => {
 }
 
 const {
+  applyPromptInjectionMode,
   assignUploadedImages,
   injectPromptIntoWorkflow,
   normalizeImageCount,
@@ -101,6 +102,45 @@ test('invalid prompt node configuration fails explicitly', () => {
   assert.throws(
     () => injectPromptIntoWorkflow({ '1': { class_type: 'Node', inputs: {} } }, 'prompt'),
     /未找到 \{\{prompt\}\} 占位符/
+  )
+})
+
+test('pre-applied mode preserves nested prompt data and ignores legacy node markers', () => {
+  const timeline = JSON.stringify({
+    global_prompt: 'line one\n"quoted" \\ path',
+    segments: [{ prompt: 'local prompt' }]
+  })
+  const workflow = {
+    '1': {
+      class_type: 'PreparedDirector',
+      inputs: { timeline_data: timeline }
+    }
+  }
+
+  const result = applyPromptInjectionMode(
+    workflow,
+    'must not replace prepared content',
+    '__legacy_prompt_already_applied__',
+    'pre-applied'
+  )
+
+  assert.equal(result.mode, 'pre-applied')
+  assert.equal(result.workflow, workflow)
+  assert.equal(result.workflow['1'].inputs.timeline_data, timeline)
+  assert.deepEqual(JSON.parse(result.workflow['1'].inputs.timeline_data), {
+    global_prompt: 'line one\n"quoted" \\ path',
+    segments: [{ prompt: 'local prompt' }]
+  })
+})
+
+test('prompt injection mode defaults to strict injection and rejects invalid values', () => {
+  assert.throws(
+    () => applyPromptInjectionMode({}, 'prompt', '__missing__'),
+    /Prompt 节点不存在：__missing__/
+  )
+  assert.throws(
+    () => applyPromptInjectionMode({}, 'prompt', undefined, 'skip'),
+    /提示词注入模式无效/
   )
 })
 

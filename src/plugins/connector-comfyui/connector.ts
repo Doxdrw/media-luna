@@ -7,7 +7,7 @@ import type { ConnectorDefinition, FileData, OutputAsset, ConnectorRequestLog } 
 import { connectorFields, connectorCardFields } from './config'
 import { WebSocket } from 'ws'
 import FormData from 'form-data'
-import { assignUploadedImages, injectPromptIntoWorkflow, planImageAssignments } from './workflow'
+import { applyPromptInjectionMode, assignUploadedImages, planImageAssignments } from './workflow'
 
 /** 解析服务器地址 */
 function parseServerEndpoint(apiUrl: string): string {
@@ -486,6 +486,7 @@ async function generate(
     isSecureConnection = false,
     workflow,
     promptNodeId,
+    promptInjectionMode = 'inject',
     imageCount = 1,
     imageNodeId1,
     imageNodeId2,
@@ -519,8 +520,16 @@ async function generate(
   }
 
   // 2. 安全替换提示词，避免多行或引号破坏工作流 JSON。
-  const promptInjection = injectPromptIntoWorkflow(workflowJson, prompt, promptNodeId)
+  const promptInjection = applyPromptInjectionMode(
+    workflowJson,
+    prompt,
+    promptNodeId,
+    promptInjectionMode
+  )
   workflowJson = promptInjection.workflow
+  if (promptInjection.mode === 'pre-applied') {
+    logger.debug('[comfyui] Using workflow with a pre-applied prompt')
+  }
 
   // 3. 在上传前校验图片数量和节点映射。
   const imagePlan = planImageAssignments(

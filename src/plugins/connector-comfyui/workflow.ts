@@ -4,11 +4,13 @@ const PROMPT_PLACEHOLDER = '{{prompt}}'
 
 export interface PromptInjectionResult {
   workflow: Record<string, any>
-  mode: 'placeholder' | 'node'
+  mode: 'placeholder' | 'node' | 'pre-applied'
   replacementCount: number
   nodeId?: string
   inputName?: 'text' | 'prompt'
 }
+
+export type PromptInjectionMode = 'inject' | 'pre-applied'
 
 export interface ImageAssignmentPlan {
   imageFiles: FileData[]
@@ -114,6 +116,26 @@ export function injectPromptIntoWorkflow(
     nodeId: automaticNodeId,
     inputName: 'text'
   }
+}
+
+/** 根据委托模式注入提示词，或保留上层连接器已经准备好的工作流。 */
+export function applyPromptInjectionMode(
+  workflow: Record<string, any>,
+  prompt: string,
+  promptNodeId?: string,
+  mode: PromptInjectionMode | string = 'inject'
+): PromptInjectionResult {
+  if (mode === 'pre-applied') {
+    return {
+      workflow,
+      mode: 'pre-applied',
+      replacementCount: 0
+    }
+  }
+  if (mode !== 'inject') {
+    throw new Error(`提示词注入模式无效：${String(mode)}，应为 inject 或 pre-applied`)
+  }
+  return injectPromptIntoWorkflow(workflow, prompt, promptNodeId)
 }
 
 export function normalizeImageCount(value: unknown): number {
